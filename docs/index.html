@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ContextSnap — AI-friendly screenshots for macOS</title>
+<meta name="description" content="Snap a region, drag it anywhere. ContextSnap is a tiny macOS menu-bar tool that makes screenshots paste correctly into terminals, chat apps, and AI tools.">
+<link rel="icon" href="favicon.png">
+<style>
+  :root {
+    --bg: #0e0f12;
+    --fg: #f4f5f7;
+    --muted: #9ba2ad;
+    --accent: #ff7a59;
+    --card: #181a20;
+    --border: #262932;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                    "Helvetica Neue", Arial, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 64px 24px 96px; }
+  header { text-align: center; margin-bottom: 56px; }
+  h1 { font-size: 56px; line-height: 1.05; margin: 0 0 16px; letter-spacing: -0.02em; }
+  .tagline { font-size: 20px; color: var(--muted); max-width: 560px; margin: 0 auto 28px; }
+  .cta {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: var(--accent); color: #1a0f0a;
+    padding: 14px 22px; border-radius: 10px; font-weight: 600;
+    font-size: 17px;
+  }
+  .cta:hover { text-decoration: none; opacity: 0.92; }
+  .cta-sub { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin: 56px 0; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }
+  .card h3 { margin: 0 0 8px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+  h2 { font-size: 26px; letter-spacing: -0.01em; margin: 56px 0 16px; }
+  pre, code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; }
+  pre { background: var(--card); border: 1px solid var(--border);
+        padding: 14px 16px; border-radius: 10px; overflow-x: auto; font-size: 13.5px; }
+  ol, ul { padding-left: 22px; }
+  li { margin: 8px 0; }
+  kbd { background: var(--card); border: 1px solid var(--border);
+        border-bottom-width: 2px; border-radius: 6px;
+        padding: 2px 7px; font-size: 13px; font-family: inherit; }
+  footer { color: var(--muted); font-size: 13px; text-align: center; margin-top: 72px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>ContextSnap</h1>
+  <p class="tagline">A tiny macOS menu-bar screenshot tool that pastes correctly
+    into terminals, chat apps, and AI coding assistants — no thinking required.</p>
+  <a class="cta" href="https://github.com/CPPAlien/ContextSnap/releases/latest">
+    Download for macOS
+  </a>
+  <div class="cta-sub">macOS 12.3+ · Apple Silicon &amp; Intel · Free &amp; open source</div>
+</header>
+
+<div class="grid">
+  <div class="card">
+    <h3>One hotkey, anywhere</h3>
+    <p>Press <kbd>⇧⌘S</kbd> to drag-select a region. Captures pile up in a
+       translucent floating stack.</p>
+  </div>
+  <div class="card">
+    <h3>Smart paste</h3>
+    <p>The same shot becomes a file path in your terminal, an image in Slack,
+       and raw PNG bytes in Preview — receiver picks the format.</p>
+  </div>
+  <div class="card">
+    <h3>Built for AI workflows</h3>
+    <p>Claude Code, ChatGPT, Cursor — drag a tile straight into the chat and
+       it lands as the right kind of attachment every time.</p>
+  </div>
+  <div class="card">
+    <h3>Local-first</h3>
+    <p>Every shot is archived under <code>~/Pictures/ContextSnap/</code>.
+       Nothing leaves your machine.</p>
+  </div>
+</div>
+
+<h2>Install</h2>
+<ol>
+  <li>Download <code>ContextSnap-x.y.z.dmg</code> from
+      <a href="https://github.com/CPPAlien/ContextSnap/releases/latest">the latest release</a>.</li>
+  <li>Open the DMG and drag <strong>ContextSnap.app</strong> into <strong>Applications</strong>.</li>
+  <li>This build isn't notarized yet, so macOS will refuse to open it on first
+      launch. Remove the quarantine flag once:
+      <pre>xattr -dr com.apple.quarantine /Applications/ContextSnap.app</pre>
+  </li>
+  <li>Launch ContextSnap. On the first capture, grant <strong>Screen Recording</strong>
+      permission in <em>System Settings → Privacy &amp; Security</em>.</li>
+</ol>
+
+<h2>Use it</h2>
+<ul>
+  <li><kbd>⇧⌘S</kbd> → drag-select a region → it appears in the floating stack.</li>
+  <li><strong>Drag</strong> a tile into any app to drop it.</li>
+  <li><strong>Click</strong> a tile to copy it to the clipboard in every format at once.</li>
+  <li>Menu bar icon → <em>Clear Stack</em> wipes the overlay; <em>Settings…</em>
+      lets you rebind the hotkey and change the save folder.</li>
+</ul>
+
+<footer>
+  <p><a href="https://github.com/CPPAlien/ContextSnap">Source on GitHub</a>
+     · MIT licensed</p>
+</footer>
+
+</div>
+</body>
+</html>

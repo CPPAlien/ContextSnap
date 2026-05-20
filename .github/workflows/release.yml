@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (e.g. 0.1.0). Used as DMG suffix and release tag."
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            v="${GITHUB_REF_NAME#v}"
+            echo "version=$v" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build DMG
+        run: ./Scripts/package-dmg.sh "${{ steps.ver.outputs.version }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ContextSnap-${{ steps.ver.outputs.version }}-dmg
+          path: dist/*.dmg
+
+      - name: Create / update release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            1. Download `ContextSnap-${{ steps.ver.outputs.version }}.dmg` below.
+            2. Open the DMG and drag **ContextSnap.app** into **Applications**.
+            3. This build is **not yet notarized**, so macOS will refuse to open it
+               by default. Run this once in Terminal to remove the quarantine flag:
+
+               ```bash
+               xattr -dr com.apple.quarantine /Applications/ContextSnap.app
+               ```
+
+            4. Launch ContextSnap. On first capture, grant **Screen Recording**
+               permission in System Settings → Privacy & Security.
