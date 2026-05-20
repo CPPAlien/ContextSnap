@@ -1,87 +1,101 @@
 # ContextSnap
 
-AI-friendly screenshot capture for macOS. Snap a region, see it float in the
-corner of your screen, then drag it (or paste it) into whatever you're talking
-to — terminals get the file path, chat apps get the image, no thinking required.
+**The missing screenshot tool for Claude Code.** Snap a region, paste it
+straight into Claude Code as a file path — and into WeChat, Slack or iMessage
+as a real image — from the *same* capture. No saving, no re-uploading, no
+"why did it paste a giant base64 blob into my terminal?"
 
-> Status: early prototype. macOS 12.3+. Built with Swift + SwiftUI + AppKit.
+> macOS 12.3+ · Swift + SwiftUI + AppKit · MIT · ~2 MB
+
+## Why this exists
+
+Claude Code, Codex CLI, and every other terminal-based AI tool want an
+**image path on disk**, not pixels — paste pixels into a terminal and you get
+nonsense. Chat apps (WeChat, Slack, iMessage, Discord) want the **opposite**:
+a real inline image, not a path. macOS's built-in screenshot tool gives you
+*one* representation at a time, and you end up saving to Desktop, finding the
+file, and dragging it in by hand.
+
+ContextSnap puts **every** representation on the clipboard at once. The app
+you paste into picks the one it understands:
+
+| You're pasting into… | What ContextSnap delivers |
+| --- | --- |
+| **Claude Code / Codex / any terminal** | The plain-text **file path** — Claude reads the image from disk |
+| **WeChat / Slack / iMessage / Discord** | The actual **image attachment** |
+| **Preview / Notes / Figma / image editors** | Raw **PNG pixels** |
+| **Finder / file uploaders / `<input type=file>`** | The **file reference** |
+
+One capture. One paste. Always the right format.
 
 ## Features
 
-- **Global hotkey** — `⌃⇧⌘S` to capture a region using the native macOS
-  selection UI.
+- **Global hotkey** — `⇧⌘S` (rebindable) to capture a region with the native
+  macOS selection UI.
 - **Floating stack** — captures pile up in a translucent panel that floats
-  above every space; close individual shots or clear the whole stack.
-- **Smart drag / paste** — every shot is offered to receiving apps in
-  multiple representations at once (file URL, PNG bytes, plain-text path), so
-  the *target* picks the format it understands:
-  - Terminals / Claude Code → plain-text path
-  - iMessage, Slack, WeChat, Discord → image attachment
-  - Preview / Notes / image editors → raw PNG
-- **Archived to disk** — every shot saved under `~/Pictures/ContextSnap/`.
+  above every Space, so you can queue up multiple shots before pasting.
+- **Multi-format clipboard** — every shot is written to the pasteboard as
+  file URL + PNG bytes + plain-text path simultaneously.
+- **Drag or paste** — drag a tile straight into any app, or just `⌘V`.
+- **Archived to disk** — every shot lives at `~/Pictures/ContextSnap/`, so
+  Claude Code (and your future self) can still find it later.
+- **Stays out of your way** — menu-bar only, no Dock icon, no window
+  furniture. Stack overlay can be hidden via Settings if you only want the
+  clipboard behavior.
 
 ## Download
 
-Grab the latest `.dmg` from the [Releases page](https://github.com/CPPAlien/ContextSnap/releases/latest).
+Grab the latest `.dmg` from the
+[Releases page](https://github.com/CPPAlien/ContextSnap/releases/latest).
 
-1. Open the DMG, drag **ContextSnap.app** into **Applications**.
-2. This build is **not yet notarized by Apple**, so macOS Gatekeeper will refuse
-   to open it on first launch. Remove the quarantine flag once:
+1. Open the DMG and drag **ContextSnap.app** into **Applications**.
+2. This build isn't notarized yet, so macOS Gatekeeper will refuse to open it
+   on first launch. Remove the quarantine flag once:
 
    ```bash
    xattr -dr com.apple.quarantine /Applications/ContextSnap.app
    ```
 
-3. Launch ContextSnap. On the first capture, macOS will ask for
-   **Screen Recording** permission — grant it in *System Settings →
-   Privacy & Security → Screen Recording*, then trigger the hotkey again.
+3. Launch ContextSnap. On the first capture, grant **Screen Recording**
+   permission in *System Settings → Privacy & Security → Screen Recording*,
+   then trigger the hotkey again.
 
-> Why the `xattr` step? Apple's Developer Program ($99/year) is required to
-> notarize apps so that Gatekeeper trusts them silently. This project hasn't
-> enrolled yet; the command above is the official way to whitelist an
-> un-notarized app you trust.
+> Why the `xattr` step? Notarization requires Apple's $99/year Developer
+> Program; this project hasn't enrolled yet. The command above is the
+> official way to trust an un-notarized app you downloaded yourself.
+
+## Use it
+
+1. Press `⇧⌘S` anywhere → drag-select a region.
+2. The shot appears in the floating stack (top-right corner).
+3. Switch to Claude Code → `⌘V` → Claude sees the image path and reads it.
+4. Or switch to WeChat → `⌘V` → an actual image attachment appears.
+5. Or **drag** the tile straight into any app for the same result.
+
+The menu-bar icon exposes *Clear Stack*, *Settings…* (hotkey + save folder +
+show/hide the stack), and *Quit*.
 
 ## Build from source
 
 ```bash
 git clone https://github.com/CPPAlien/ContextSnap.git
 cd ContextSnap
-./Scripts/build-app.sh           # produces .build/release/ContextSnap.app
-./Scripts/package-dmg.sh         # optional: build a distributable dmg into dist/
+./Scripts/build-app.sh           # → .build/release/ContextSnap.app
+./Scripts/package-dmg.sh         # → dist/ContextSnap-<version>.dmg
 open .build/release/ContextSnap.app
 ```
-
-The first launch will prompt for Screen Recording permission. Grant it in
-System Settings → Privacy & Security → Screen Recording, then relaunch.
-
-## Usage
-
-- Press `⌃⇧⌘S` anywhere → drag-select a region → it appears in the floating
-  stack.
-- **Drag** a tile into any app to drop it (terminal, chat, editor, browser).
-- **Click** a tile to copy it to the clipboard in all formats at once.
-- **Hover** a tile and click the ✕ to remove it.
-- Menu bar icon → `Clear Stack` wipes the overlay; `Quit` exits.
 
 ## Project layout
 
 ```
 Sources/ContextSnap/
-├── main.swift               # NSApplication bootstrap
-├── AppDelegate.swift        # status item + hotkey wiring
-├── Capture/
-│   ├── ScreenCapturer.swift # shells out to /usr/sbin/screencapture -i
-│   └── ShotStore.swift      # ~/Pictures/ContextSnap/clip-*.png
-├── Models/
-│   └── ShotStack.swift      # @MainActor ObservableObject
-├── Overlay/
-│   ├── OverlayPanelController.swift  # NSPanel hosting the SwiftUI view
-│   ├── ShotStackView.swift
-│   └── ShotTileView.swift   # drag source + close button
-├── Clipboard/
-│   └── MultiFormatPasteboard.swift   # multi-representation pasteboard
-└── Hotkey/
-    └── GlobalHotkey.swift   # Carbon RegisterEventHotKey wrapper
+├── AppDelegate.swift                # menu-bar + hotkey wiring
+├── Capture/ScreenCapturer.swift     # /usr/sbin/screencapture -i wrapper
+├── Capture/ShotStore.swift          # ~/Pictures/ContextSnap/clip-*.png
+├── Clipboard/MultiFormatPasteboard  # the heart of it — multi-rep clipboard
+├── Hotkey/GlobalHotkey.swift        # Carbon RegisterEventHotKey
+├── Overlay/                         # SwiftUI floating stack
+└── Settings/                        # hotkey + save dir + visibility
 ```
 
 ## License

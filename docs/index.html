@@ -3,114 +3,248 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ContextSnap — AI-friendly screenshots for macOS</title>
-<meta name="description" content="Snap a region, drag it anywhere. ContextSnap is a tiny macOS menu-bar tool that makes screenshots paste correctly into terminals, chat apps, and AI tools.">
+<title>ContextSnap — The missing screenshot tool for Claude Code</title>
+<meta name="description" content="Snap a region on macOS and paste it as a file path into Claude Code, as an image into WeChat or Slack — from the same capture. One hotkey, one paste, always the right format.">
+<meta property="og:title" content="ContextSnap — Screenshots that paste right, everywhere.">
+<meta property="og:description" content="The missing screenshot tool for Claude Code. Paste as a path into your terminal, as an image into chat — from the same capture.">
+<meta property="og:type" content="website">
 <link rel="icon" href="favicon.png">
 <style>
   :root {
-    --bg: #0e0f12;
+    --bg: #0b0c10;
+    --bg-soft: #14161d;
     --fg: #f4f5f7;
     --muted: #9ba2ad;
     --accent: #ff7a59;
-    --card: #181a20;
+    --accent-soft: rgba(255, 122, 89, 0.12);
     --border: #262932;
+    --card: #181a20;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
-    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text",
-                    "Helvetica Neue", Arial, sans-serif; }
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                   "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 64px 24px 96px; }
-  header { text-align: center; margin-bottom: 56px; }
-  h1 { font-size: 56px; line-height: 1.05; margin: 0 0 16px; letter-spacing: -0.02em; }
-  .tagline { font-size: 20px; color: var(--muted); max-width: 560px; margin: 0 auto 28px; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 64px 24px 96px; }
+
+  header { text-align: center; margin-bottom: 64px; }
+  .badge {
+    display: inline-block; background: var(--accent-soft); color: var(--accent);
+    padding: 6px 12px; border-radius: 100px;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
+    margin-bottom: 18px;
+  }
+  h1 { font-size: 60px; line-height: 1.04; margin: 0 0 18px;
+       letter-spacing: -0.025em; font-weight: 700; }
+  h1 .accent { color: var(--accent); }
+  .tagline { font-size: 21px; color: var(--muted); max-width: 620px;
+             margin: 0 auto 32px; }
   .cta {
     display: inline-flex; align-items: center; gap: 10px;
     background: var(--accent); color: #1a0f0a;
-    padding: 14px 22px; border-radius: 10px; font-weight: 600;
-    font-size: 17px;
+    padding: 14px 24px; border-radius: 10px; font-weight: 700;
+    font-size: 17px; transition: transform 0.1s;
   }
-  .cta:hover { text-decoration: none; opacity: 0.92; }
-  .cta-sub { color: var(--muted); font-size: 13px; margin-top: 10px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin: 56px 0; }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }
-  .card h3 { margin: 0 0 8px; font-size: 17px; }
-  .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
-  h2 { font-size: 26px; letter-spacing: -0.01em; margin: 56px 0 16px; }
-  pre, code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; }
+  .cta:hover { text-decoration: none; transform: translateY(-1px); }
+  .cta-sub { color: var(--muted); font-size: 13px; margin-top: 12px; }
+
+  h2 { font-size: 28px; letter-spacing: -0.01em; margin: 72px 0 18px;
+       font-weight: 700; }
+  h2 .accent { color: var(--accent); }
+  p.lead { color: var(--muted); font-size: 17px; max-width: 720px; }
+
+  /* Problem section */
+  .problem {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 32px;
+    margin: 32px 0;
+  }
+  .problem p { margin: 0 0 12px; }
+  .problem p:last-child { margin-bottom: 0; }
+  .problem code { background: var(--card); padding: 2px 8px;
+                  border-radius: 5px; font-size: 13.5px; }
+
+  /* Matrix table */
+  .matrix {
+    width: 100%; border-collapse: separate; border-spacing: 0;
+    margin: 28px 0; font-size: 15px;
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  }
+  .matrix th, .matrix td { padding: 16px 20px; text-align: left;
+                            border-bottom: 1px solid var(--border); }
+  .matrix tr:last-child td { border-bottom: none; }
+  .matrix th { background: var(--bg-soft); color: var(--muted);
+               font-weight: 600; font-size: 13px;
+               text-transform: uppercase; letter-spacing: 0.05em; }
+  .matrix td:first-child { font-weight: 600; }
+  .matrix td:last-child { color: var(--muted); }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 100px;
+          font-size: 12.5px; font-weight: 600; background: var(--accent-soft);
+          color: var(--accent); }
+
+  /* Features grid */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+          gap: 14px; margin: 28px 0 0; }
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 12px; padding: 22px 22px 20px; }
+  .card h3 { margin: 0 0 6px; font-size: 16px; font-weight: 700; }
+  .card p { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.55; }
+
+  /* Steps */
+  .steps { counter-reset: step; padding: 0; margin: 24px 0; list-style: none; }
+  .steps li { counter-increment: step; position: relative;
+              padding: 14px 0 14px 50px; border-bottom: 1px solid var(--border); }
+  .steps li:last-child { border-bottom: none; }
+  .steps li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 14px;
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent);
+    font-weight: 700; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
   pre { background: var(--card); border: 1px solid var(--border);
-        padding: 14px 16px; border-radius: 10px; overflow-x: auto; font-size: 13.5px; }
-  ol, ul { padding-left: 22px; }
-  li { margin: 8px 0; }
+        padding: 14px 16px; border-radius: 10px; overflow-x: auto;
+        font-size: 13.5px; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; }
+  code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; }
   kbd { background: var(--card); border: 1px solid var(--border);
         border-bottom-width: 2px; border-radius: 6px;
-        padding: 2px 7px; font-size: 13px; font-family: inherit; }
-  footer { color: var(--muted); font-size: 13px; text-align: center; margin-top: 72px; }
-  .muted { color: var(--muted); }
+        padding: 2px 8px; font-size: 13px; font-family: inherit;
+        font-weight: 600; }
+
+  footer { color: var(--muted); font-size: 13px; text-align: center;
+           margin-top: 80px; padding-top: 32px; border-top: 1px solid var(--border); }
+
+  @media (max-width: 600px) {
+    h1 { font-size: 42px; }
+    .tagline { font-size: 18px; }
+    .wrap { padding: 48px 20px 64px; }
+    .matrix th, .matrix td { padding: 12px 14px; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
 
 <header>
-  <h1>ContextSnap</h1>
-  <p class="tagline">A tiny macOS menu-bar screenshot tool that pastes correctly
-    into terminals, chat apps, and AI coding assistants — no thinking required.</p>
+  <span class="badge">★ Built for Claude Code</span>
+  <h1>Screenshots that <span class="accent">paste right</span>,<br>everywhere.</h1>
+  <p class="tagline">
+    The missing macOS screenshot tool for Claude Code. Snap a region — paste
+    it as a <strong>file path</strong> into Claude, as a <strong>real image</strong>
+    into WeChat or Slack — from the same capture.
+  </p>
   <a class="cta" href="https://github.com/CPPAlien/ContextSnap/releases/latest">
     Download for macOS
   </a>
-  <div class="cta-sub">macOS 12.3+ · Apple Silicon &amp; Intel · Free &amp; open source</div>
+  <div class="cta-sub">macOS 12.3+ · Apple Silicon &amp; Intel · Free &amp; open source · ~2 MB</div>
 </header>
 
+<h2>The problem</h2>
+<div class="problem">
+  <p>Claude Code wants a <strong>file path</strong>. Paste raw pixels into the
+     terminal and you get garbage.</p>
+  <p>WeChat, Slack, iMessage want a <strong>real image</strong>. Paste a path
+     and you get a blue link nobody can preview.</p>
+  <p>macOS's built-in screenshot tool gives you <em>one</em> representation
+     at a time, so you end up saving to Desktop, hunting the file in Finder,
+     and dragging it in by hand. Every. Single. Time.</p>
+</div>
+
+<h2>The fix: <span class="accent">one capture, every format</span></h2>
+<p class="lead">
+  ContextSnap writes every shot to the clipboard as file path
+  <em>and</em> image <em>and</em> PNG bytes — all at once. The app you paste
+  into picks the format it understands.
+</p>
+
+<table class="matrix">
+  <thead>
+    <tr><th>Paste into…</th><th>What lands</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Claude Code / Codex / any terminal</td>
+      <td><span class="pill">file path</span> &nbsp; Claude reads the image from disk</td>
+    </tr>
+    <tr>
+      <td>WeChat / Slack / iMessage / Discord</td>
+      <td><span class="pill">image</span> &nbsp; inline attachment, exactly as if you screenshotted in-app</td>
+    </tr>
+    <tr>
+      <td>Preview / Notes / Figma / image editors</td>
+      <td><span class="pill">PNG</span> &nbsp; raw pixels</td>
+    </tr>
+    <tr>
+      <td>Finder / file upload dialogs</td>
+      <td><span class="pill">file ref</span> &nbsp; drops the PNG as a real file</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Why you'll keep it open</h2>
 <div class="grid">
   <div class="card">
-    <h3>One hotkey, anywhere</h3>
-    <p>Press <kbd>⇧⌘S</kbd> to drag-select a region. Captures pile up in a
-       translucent floating stack.</p>
+    <h3>One hotkey</h3>
+    <p><kbd>⇧⌘S</kbd> anywhere — native macOS region selection, no learning curve.</p>
   </div>
   <div class="card">
-    <h3>Smart paste</h3>
-    <p>The same shot becomes a file path in your terminal, an image in Slack,
-       and raw PNG bytes in Preview — receiver picks the format.</p>
+    <h3>Floating stack</h3>
+    <p>Queue up multiple shots, drag tiles into wherever they need to go, clear when done.</p>
   </div>
   <div class="card">
-    <h3>Built for AI workflows</h3>
-    <p>Claude Code, ChatGPT, Cursor — drag a tile straight into the chat and
-       it lands as the right kind of attachment every time.</p>
+    <h3>Claude-Code-first</h3>
+    <p>Designed so the terminal paste case <em>just works</em>. No more "drag from Finder" detours.</p>
   </div>
   <div class="card">
     <h3>Local-first</h3>
-    <p>Every shot is archived under <code>~/Pictures/ContextSnap/</code>.
-       Nothing leaves your machine.</p>
+    <p>Every shot is archived under <code>~/Pictures/ContextSnap/</code>. Nothing leaves your machine.</p>
+  </div>
+  <div class="card">
+    <h3>Menu-bar only</h3>
+    <p>No Dock icon, no main window. Stays out of your way until you press the hotkey.</p>
+  </div>
+  <div class="card">
+    <h3>Open source · MIT</h3>
+    <p>~2 MB. Pure Swift + SwiftUI. Read the whole thing in an afternoon.</p>
   </div>
 </div>
 
-<h2>Install</h2>
-<ol>
+<h2>Install in 90 seconds</h2>
+<ol class="steps">
   <li>Download <code>ContextSnap-x.y.z.dmg</code> from
       <a href="https://github.com/CPPAlien/ContextSnap/releases/latest">the latest release</a>.</li>
   <li>Open the DMG and drag <strong>ContextSnap.app</strong> into <strong>Applications</strong>.</li>
-  <li>This build isn't notarized yet, so macOS will refuse to open it on first
-      launch. Remove the quarantine flag once:
-      <pre>xattr -dr com.apple.quarantine /Applications/ContextSnap.app</pre>
-  </li>
+  <li>This build isn't notarized yet (Apple's $99/yr Developer Program required),
+      so macOS will refuse to open it on first launch. Remove the quarantine
+      flag once:
+      <pre>xattr -dr com.apple.quarantine /Applications/ContextSnap.app</pre></li>
   <li>Launch ContextSnap. On the first capture, grant <strong>Screen Recording</strong>
-      permission in <em>System Settings → Privacy &amp; Security</em>.</li>
+      permission in <em>System Settings → Privacy &amp; Security</em>, then
+      trigger the hotkey again.</li>
 </ol>
 
-<h2>Use it</h2>
-<ul>
-  <li><kbd>⇧⌘S</kbd> → drag-select a region → it appears in the floating stack.</li>
-  <li><strong>Drag</strong> a tile into any app to drop it.</li>
-  <li><strong>Click</strong> a tile to copy it to the clipboard in every format at once.</li>
-  <li>Menu bar icon → <em>Clear Stack</em> wipes the overlay; <em>Settings…</em>
-      lets you rebind the hotkey and change the save folder.</li>
-</ul>
+<h2>The workflow</h2>
+<ol class="steps">
+  <li>Press <kbd>⇧⌘S</kbd> → drag-select a region.</li>
+  <li>The shot appears in the floating stack (top-right corner).</li>
+  <li>Switch to <strong>Claude Code</strong> → <kbd>⌘V</kbd> → Claude sees the path and reads the image.</li>
+  <li>Switch to <strong>WeChat</strong> → <kbd>⌘V</kbd> → an actual image attachment. Same capture, no extra step.</li>
+</ol>
 
 <footer>
-  <p><a href="https://github.com/CPPAlien/ContextSnap">Source on GitHub</a>
-     · MIT licensed</p>
+  <p>
+    <a href="https://github.com/CPPAlien/ContextSnap">Source on GitHub</a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/CPPAlien/ContextSnap/releases">All releases</a>
+    &nbsp;·&nbsp; MIT licensed
+  </p>
 </footer>
 
 </div>
