@@ -22,11 +22,11 @@ final class SelectionOverlay {
         self.continuation = continuation
         let target = NSScreen.screenContainingMouse() ?? NSScreen.main!
         self.screen = target
-        window = NSWindow(contentRect: target.frame,
-                          styleMask: .borderless,
-                          backing: .buffered,
-                          defer: false,
-                          screen: target)
+        window = KeyableOverlayWindow(contentRect: target.frame,
+                                      styleMask: [.nonactivatingPanel, .borderless],
+                                      backing: .buffered,
+                                      defer: false,
+                                      screen: target)
         window.level = .screenSaver
         window.backgroundColor = .clear
         window.isOpaque = false
@@ -39,8 +39,11 @@ final class SelectionOverlay {
 
     private func present() {
         view.onComplete = { [weak self] rect in self?.finish(rect) }
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        // Don't NSApp.activate — that yanks the user out of any active
+        // fullscreen Space. The nonactivating panel can still receive
+        // mouse + key events without us becoming frontmost.
+        window.orderFrontRegardless()
+        window.makeKey()
         window.makeFirstResponder(view)
         NSCursor.crosshair.set()
     }
@@ -60,6 +63,14 @@ final class SelectionOverlay {
         continuation = nil
         Self.active = nil
     }
+}
+
+private final class KeyableOverlayWindow: NSPanel {
+    // Borderless / nonactivating panels return false from canBecomeKey
+    // by default, which prevents keyDown events (incl. Esc) from reaching
+    // the view. Force it on so Esc still cancels the selection.
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
 
 private extension NSScreen {
