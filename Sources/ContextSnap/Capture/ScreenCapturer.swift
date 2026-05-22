@@ -31,11 +31,12 @@ enum ScreenCapturer {
     /// CoreGraphics global coordinates (top-left of primary screen) and
     /// captures that region from on-screen windows.
     private static func capture(cocoaRect: NSRect) -> CGImage? {
-        guard let primary = NSScreen.screens.first else { return nil }
-        let primaryHeight = primary.frame.height
+        guard let display = displayInfo(containing: cocoaRect) else { return nil }
+        let localX = cocoaRect.minX - display.screenFrame.minX
+        let localY = cocoaRect.minY - display.screenFrame.minY
         let cgRect = CGRect(
-            x: cocoaRect.origin.x,
-            y: primaryHeight - cocoaRect.origin.y - cocoaRect.height,
+            x: display.cgBounds.minX + localX,
+            y: display.cgBounds.minY + display.screenFrame.height - localY - cocoaRect.height,
             width: cocoaRect.width,
             height: cocoaRect.height
         )
@@ -43,5 +44,16 @@ enum ScreenCapturer {
                                        .optionOnScreenOnly,
                                        kCGNullWindowID,
                                        [.bestResolution, .boundsIgnoreFraming])
+    }
+
+    private static func displayInfo(containing rect: NSRect) -> (screenFrame: NSRect, cgBounds: CGRect)? {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        for screen in NSScreen.screens {
+            guard screen.frame.contains(center),
+                  let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+            else { continue }
+            return (screen.frame, CGDisplayBounds(id))
+        }
+        return nil
     }
 }

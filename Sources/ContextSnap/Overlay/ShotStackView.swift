@@ -3,23 +3,72 @@ import SwiftUI
 
 struct ShotStackView: View {
     @ObservedObject var model: ShotStack
+    let onPreview: (Shot) -> Void
+    let onLayoutChange: () -> Void
+    @State private var isCollapsed = false
 
     var body: some View {
         VStack(spacing: 8) {
-            DragHandle()
+            StackHeader(
+                count: model.shots.count,
+                isCollapsed: isCollapsed,
+                onToggle: {
+                    isCollapsed.toggle()
+                    onLayoutChange()
+                }
+            )
                 .frame(height: 22)
-            ForEach(model.shots.reversed()) { shot in
-                ShotTileView(
-                    shot: shot,
-                    isSelected: model.selectedID == shot.id,
-                    onSelect: { model.selectedID = shot.id },
-                    onClose: { model.remove(shot) }
-                )
+            if !isCollapsed {
+                ForEach(model.shots.reversed()) { shot in
+                    ShotTileView(
+                        shot: shot,
+                        isSelected: model.selectedID == shot.id,
+                        onSelect: { model.selectedID = shot.id },
+                        onPreview: { onPreview(shot) },
+                        onClose: { model.remove(shot) }
+                    )
+                }
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .top)
         .animation(.easeInOut(duration: 0.18), value: model.shots.count)
+        .animation(.easeInOut(duration: 0.18), value: isCollapsed)
+    }
+}
+
+private struct StackHeader: View {
+    let count: Int
+    let isCollapsed: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        ZStack {
+            DragHandle()
+
+            HStack(spacing: 6) {
+                if isCollapsed {
+                    Text("\(count)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.86))
+                        .frame(minWidth: 18, minHeight: 18)
+                        .background(.black.opacity(0.38), in: Capsule())
+                }
+
+                Spacer()
+
+                Button(action: onToggle) {
+                    Image(systemName: isCollapsed ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 11, weight: .bold))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.9))
+                .background(.black.opacity(0.35), in: Circle())
+                .help(isCollapsed ? "Expand stack" : "Collapse stack")
+            }
+            .padding(.horizontal, 4)
+        }
     }
 }
 

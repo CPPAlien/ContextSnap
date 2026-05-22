@@ -4,15 +4,17 @@ struct ShotTileView: View {
     let shot: Shot
     let isSelected: Bool
     let onSelect: () -> Void
+    let onPreview: () -> Void
     let onClose: () -> Void
     @State private var hovering = false
+    @State private var longPressPreviewed = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Image(nsImage: shot.image)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: 200, maxHeight: 200)
+                .frame(maxWidth: 156, maxHeight: 156)
                 .background(.ultraThinMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(
@@ -37,8 +39,21 @@ struct ShotTileView: View {
                     return MultiFormatPasteboard.makeItemProvider(for: shot)
                 }
                 .onTapGesture {
+                    guard !longPressPreviewed else {
+                        longPressPreviewed = false
+                        return
+                    }
+                    if isSelected {
+                        onPreview()
+                        return
+                    }
                     onSelect()
                     MultiFormatPasteboard.writeToClipboard(shot)
+                }
+                .onLongPressGesture(minimumDuration: 2) {
+                    longPressPreviewed = true
+                    onSelect()
+                    onPreview()
                 }
 
             if hovering {
@@ -54,7 +69,7 @@ struct ShotTileView: View {
             }
         }
         .onHover { hovering = $0 }
-        .help("Drag to attach · Click to copy · Hover ✕ to remove")
+        .help("Drag to attach · Click to copy · Click selected item or hold 2s to preview · Hover ✕ to remove")
     }
 }
 

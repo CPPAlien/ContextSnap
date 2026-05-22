@@ -5,13 +5,17 @@ import SwiftUI
 @MainActor
 final class OverlayPanelController {
     private let panel: NSPanel
-    private let host: NSHostingView<ShotStackView>
+    private var host: NSHostingView<ShotStackView>!
+    private var previewPanel: PreviewPanel?
+    private var previewedShotID: Shot.ID?
+    private var localPreviewEscapeMonitor: Any?
+    private var globalPreviewEscapeMonitor: Any?
     let model = ShotStack()
     private var cancellables: Set<AnyCancellable> = []
     private var followTimer: Timer?
     private var lastScreenFrame: NSRect = .zero
 
-    private static let panelWidth: CGFloat = 220
+    private static let panelWidth: CGFloat = 176
     private static let edgeInset: CGFloat = 24
 
     init() {
@@ -41,7 +45,19 @@ final class OverlayPanelController {
         panel.isMovableByWindowBackground = false
         panel.isMovable = true
 
-        host = NSHostingView(rootView: ShotStackView(model: model))
+        host = NSHostingView(
+            rootView: ShotStackView(
+                model: model,
+                onPreview: { [weak self] shot in
+                    self?.showPreview(for: shot)
+                },
+                onLayoutChange: { [weak self] in
+                    DispatchQueue.main.async {
+                        self?.resizeToFit()
+                    }
+                }
+            )
+        )
         host.autoresizingMask = [.width, .height]
         panel.contentView = host
 
@@ -55,8 +71,8 @@ final class OverlayPanelController {
             .sink { [weak self] _ in self?.applyVisibility() }
             .store(in: &cancellables)
 
-        // Re-anchor immediately when the active app/Space/display changes.
-        // The visible-only timer below keeps multi-display focus changes smooth.
+        // Re-check when the active app/Space/display changes. If the stack is
+        // already visible on any current screen, keep it where the user left it.
         NSWorkspace.shared.notificationCenter
             .publisher(for: NSWorkspace.didActivateApplicationNotification)
             .receive(on: DispatchQueue.main)
@@ -103,6 +119,7 @@ final class OverlayPanelController {
 
     func clear() {
         model.clear()
+        closePreview()
         panel.orderOut(nil)
         stopScreenFollow()
     }
@@ -121,14 +138,33 @@ final class OverlayPanelController {
 
     private func resizeToFit(anchor: NSRect? = nil) {
         let fitting = host.fittingSize
-        let height = max(fitting.height, 80)
-        let anchor = anchor ?? anchorRect()
-        let newFrame = NSRect(
-            x: anchor.maxX - Self.panelWidth - Self.edgeInset,
-            y: anchor.maxY - height - Self.edgeInset,
-            width: Self.panelWidth,
-            height: height
-        )
+        let height = max(fitting.height, 42)
+        let newFrame: NSRect
+
+        if let anchor {
+            newFrame = NSRect(
+                x: anchor.maxX - Self.panelWidth - Self.edgeInset,
+                y: anchor.maxY - height - Self.edgeInset,
+                width: Self.panelWidth,
+                height: height
+            )
+        } else if panelVisibleScreenFrame() != nil {
+            newFrame = NSRect(
+                x: panel.frame.maxX - Self.panelWidth,
+                y: panel.frame.maxY - height,
+                width: Self.panelWidth,
+                height: height
+            )
+        } else {
+            let anchor = anchorRect()
+            newFrame = NSRect(
+                x: anchor.maxX - Self.panelWidth - Self.edgeInset,
+                y: anchor.maxY - height - Self.edgeInset,
+                width: Self.panelWidth,
+                height: height
+            )
+        }
+
         panel.setFrame(newFrame, display: true, animate: false)
     }
 
@@ -161,9 +197,155 @@ final class OverlayPanelController {
         lastScreenFrame = .zero
     }
 
+    private func showPreview(for shot: Shot) {
+        previewedShotID = shot.id
+        model.selectedID = shot.id
+
+        let anchor = panelVisibleScreenFrame()
+            ?? panel.screen?.visibleFrame
+            ?? targetScreenFrame()
+        let imageSize = shot.image.size
+        let maxSize = CGSize(width: anchor.width * 0.82, height: anchor.height * 0.82)
+        let imageAspect = imageSize.width / max(imageSize.height, 1)
+        let maxAspect = maxSize.width / max(maxSize.height, 1)
+        let previewSize: CGSize
+
+        if imageAspect > maxAspect {
+            previewSize = CGSize(width: maxSize.width, height: maxSize.width / imageAspect)
+        } else {
+            previewSize = CGSize(width: maxSize.height * imageAspect, height: maxSize.height)
+        }
+
+        let panelSize = CGSize(
+            width: max(previewSize.width + 28, 360),
+            height: max(previewSize.height + 28, 260)
+        )
+        let frame = NSRect(
+            x: anchor.midX - panelSize.width / 2,
+            y: anchor.midY - panelSize.height / 2,
+            width: panelSize.width,
+            height: panelSize.height
+        )
+
+        let preview = previewPanel ?? makePreviewPanel()
+        preview.onClose = { [weak self] in self?.closePreview() }
+        preview.onPrevious = { [weak self] in self?.showPreviousPreview() }
+        preview.onNext = { [weak self] in self?.showNextPreview() }
+        preview.contentView = NSHostingView(
+            rootView: ShotPreviewView(
+                shot: shot,
+                canGoPrevious: previousShot(before: shot.id) != nil,
+                canGoNext: nextShot(after: shot.id) != nil,
+                onCopy: { MultiFormatPasteboard.writeToClipboard(shot) },
+                onPrevious: { [weak self] in self?.showPreviousPreview() },
+                onNext: { [weak self] in self?.showNextPreview() },
+                onClose: { [weak self] in self?.closePreview() }
+            )
+        )
+        preview.setFrame(frame, display: true, animate: false)
+        preview.orderFrontRegardless()
+        preview.makeKey()
+        previewPanel = preview
+        startPreviewEscapeMonitoring()
+    }
+
+    private func makePreviewPanel() -> PreviewPanel {
+        let panel = PreviewPanel(
+            contentRect: .zero,
+            styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .popUpMenu
+        panel.isFloatingPanel = true
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = true
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        return panel
+    }
+
+    private func closePreview() {
+        previewPanel?.orderOut(nil)
+        previewPanel?.resignKey()
+        previewedShotID = nil
+        stopPreviewEscapeMonitoring()
+    }
+
+    private func showPreviousPreview() {
+        guard let previewedShotID, let shot = previousShot(before: previewedShotID) else { return }
+        showPreview(for: shot)
+    }
+
+    private func showNextPreview() {
+        guard let previewedShotID, let shot = nextShot(after: previewedShotID) else { return }
+        showPreview(for: shot)
+    }
+
+    private func previousShot(before id: Shot.ID) -> Shot? {
+        guard let index = model.shots.firstIndex(where: { $0.id == id }), index > 0 else { return nil }
+        return model.shots[index - 1]
+    }
+
+    private func nextShot(after id: Shot.ID) -> Shot? {
+        guard let index = model.shots.firstIndex(where: { $0.id == id }),
+              index < model.shots.index(before: model.shots.endIndex)
+        else { return nil }
+        return model.shots[index + 1]
+    }
+
+    private func startPreviewEscapeMonitoring() {
+        guard localPreviewEscapeMonitor == nil, globalPreviewEscapeMonitor == nil else { return }
+
+        localPreviewEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            switch event.keyCode {
+            case 53:
+                self?.closePreview()
+                return nil
+            case 123:
+                self?.showPreviousPreview()
+                return nil
+            case 124:
+                self?.showNextPreview()
+                return nil
+            default:
+                return event
+            }
+        }
+
+        globalPreviewEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return }
+            Task { @MainActor in
+                self?.closePreview()
+            }
+        }
+    }
+
+    private func stopPreviewEscapeMonitoring() {
+        if let localPreviewEscapeMonitor {
+            NSEvent.removeMonitor(localPreviewEscapeMonitor)
+            self.localPreviewEscapeMonitor = nil
+        }
+
+        if let globalPreviewEscapeMonitor {
+            NSEvent.removeMonitor(globalPreviewEscapeMonitor)
+            self.globalPreviewEscapeMonitor = nil
+        }
+    }
+
     private func followCurrentScreen(force: Bool = false) {
         guard panel.isVisible else {
             stopScreenFollow()
+            return
+        }
+
+        if let visibleScreenFrame = panelVisibleScreenFrame() {
+            lastScreenFrame = visibleScreenFrame
+            if force { resizeToFit() }
             return
         }
 
@@ -181,11 +363,18 @@ final class OverlayPanelController {
     }
 
     private func targetScreenFrame() -> NSRect {
-        NSScreen.main?.visibleFrame
-            ?? frontmostWindowScreenFrame()
+        frontmostWindowScreenFrame()
             ?? screenContainingMouse()?.visibleFrame
+            ?? NSScreen.main?.visibleFrame
             ?? panel.screen?.visibleFrame
             ?? .zero
+    }
+
+    private func panelVisibleScreenFrame() -> NSRect? {
+        let center = CGPoint(x: panel.frame.midX, y: panel.frame.midY)
+        return NSScreen.screens.first { screen in
+            screen.visibleFrame.insetBy(dx: -20, dy: -20).contains(center)
+        }?.visibleFrame
     }
 
     private func frontmostWindowScreenFrame() -> NSRect? {
@@ -227,6 +416,37 @@ final class OverlayPanelController {
             }
             return CGDisplayBounds(id).contains(point)
         }
+    }
+}
+
+private final class PreviewPanel: NSPanel {
+    var onClose: (() -> Void)?
+    var onPrevious: (() -> Void)?
+    var onNext: (() -> Void)?
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    override func sendEvent(_ event: NSEvent) {
+        guard event.type == .keyDown else {
+            super.sendEvent(event)
+            return
+        }
+
+        switch event.keyCode {
+        case 53:
+            onClose?()
+        case 123:
+            onPrevious?()
+        case 124:
+            onNext?()
+        default:
+            super.sendEvent(event)
+        }
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        onClose?()
     }
 }
 

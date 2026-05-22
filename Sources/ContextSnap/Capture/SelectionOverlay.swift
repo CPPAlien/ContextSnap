@@ -17,31 +17,37 @@ final class SelectionOverlay {
     private let view: SelectionView
     private let screen: NSScreen
     private var continuation: CheckedContinuation<NSRect?, Never>?
+    private var localEscapeMonitor: Any?
+    private var globalEscapeMonitor: Any?
 
     private init(continuation: CheckedContinuation<NSRect?, Never>) {
         self.continuation = continuation
-        let target = NSScreen.screenContainingMouse() ?? NSScreen.main!
-        self.screen = target
-        window = KeyableOverlayWindow(contentRect: target.frame,
+        self.screen = NSScreen.screenContainingMouse() ?? NSScreen.main!
+        window = KeyableOverlayWindow(contentRect: screen.frame,
                                       styleMask: [.nonactivatingPanel, .borderless],
                                       backing: .buffered,
                                       defer: false,
-                                      screen: target)
+                                      screen: screen)
         window.level = .screenSaver
         window.backgroundColor = .clear
         window.isOpaque = false
         window.hasShadow = false
         window.ignoresMouseEvents = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        view = SelectionView(frame: NSRect(origin: .zero, size: target.frame.size))
+
+        view = SelectionView(frame: NSRect(origin: .zero, size: screen.frame.size))
         window.contentView = view
     }
 
     private func present() {
-        view.onComplete = { [weak self] rect in self?.finish(rect) }
+        view.onComplete = { [weak self] rect in
+            self?.finish(rect)
+        }
+        startEscapeMonitoring()
         // Don't NSApp.activate — that yanks the user out of any active
         // fullscreen Space. The nonactivating panel can still receive
         // mouse + key events without us becoming frontmost.
+        window.setFrame(screen.frame, display: true)
         window.orderFrontRegardless()
         window.makeKey()
         window.makeFirstResponder(view)
@@ -49,8 +55,14 @@ final class SelectionOverlay {
     }
 
     private func finish(_ rect: NSRect?) {
+        guard let continuation else { return }
+
         NSCursor.arrow.set()
+        stopEscapeMonitoring()
+        view.onComplete = nil
         window.orderOut(nil)
+        window.close()
+
         let global: NSRect?
         if let r = rect {
             global = NSRect(x: screen.frame.origin.x + r.origin.x,
@@ -59,9 +71,43 @@ final class SelectionOverlay {
         } else {
             global = nil
         }
-        continuation?.resume(returning: global)
-        continuation = nil
+        self.continuation = nil
+        continuation.resume(returning: global)
         Self.active = nil
+    }
+
+    private func startEscapeMonitoring() {
+        localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event }
+            self?.finish(nil)
+            return nil
+        }
+
+        globalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return }
+            Task { @MainActor in
+                self?.finish(nil)
+            }
+        }
+    }
+
+    private func stopEscapeMonitoring() {
+        if let localEscapeMonitor {
+            NSEvent.removeMonitor(localEscapeMonitor)
+            self.localEscapeMonitor = nil
+        }
+
+        if let globalEscapeMonitor {
+            NSEvent.removeMonitor(globalEscapeMonitor)
+            self.globalEscapeMonitor = nil
+        }
+    }
+}
+
+private extension NSScreen {
+    static func screenContainingMouse() -> NSScreen? {
+        let point = NSEvent.mouseLocation
+        return screens.first { $0.frame.contains(point) }
     }
 }
 
@@ -71,13 +117,6 @@ private final class KeyableOverlayWindow: NSPanel {
     // the view. Force it on so Esc still cancels the selection.
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
-}
-
-private extension NSScreen {
-    static func screenContainingMouse() -> NSScreen? {
-        let p = NSEvent.mouseLocation
-        return NSScreen.screens.first { NSPointInRect(p, $0.frame) }
-    }
 }
 
 private final class SelectionView: NSView {
