@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "ContextSnap",
-    platforms: [.macOS(.v12)],
+    platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
             name: "ContextSnap",
