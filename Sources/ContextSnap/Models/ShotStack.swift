@@ -16,29 +16,13 @@ final class ShotStack: ObservableObject {
         if selectedID == shot.id { selectedID = shots.last?.id }
     }
 
-    func updateImage(for id: Shot.ID, image: NSImage, isEdited: Bool = true) {
+    func updateAnnotations(for id: Shot.ID, _ annotations: [Annotation]) {
         guard let index = shots.firstIndex(where: { $0.id == id }) else { return }
-        shots[index].image = image
-        shots[index].isEdited = isEdited
-        if let data = Self.pngData(from: image) {
-            try? data.write(to: shots[index].url, options: .atomic)
-        }
-    }
-
-    func resetImage(for id: Shot.ID) {
-        guard let index = shots.firstIndex(where: { $0.id == id }) else { return }
-        updateImage(for: id, image: shots[index].originalImage, isEdited: false)
+        shots[index].annotations = annotations
     }
 
     func clear() {
         shots.removeAll()
         selectedID = nil
-    }
-
-    private static func pngData(from image: NSImage) -> Data? {
-        guard let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff)
-        else { return nil }
-        return bitmap.representation(using: .png, properties: [:])
     }
 }

@@ -15,6 +15,10 @@ struct ShotTileView: View {
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(maxWidth: 156, maxHeight: 156)
+                .overlay(
+                    AnnotationCanvas(imageSize: shot.image.size, annotations: shot.annotations)
+                        .allowsHitTesting(false)
+                )
                 .background(.ultraThinMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(

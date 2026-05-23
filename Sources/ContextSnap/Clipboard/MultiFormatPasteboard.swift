@@ -8,13 +8,16 @@ import UniformTypeIdentifiers
 ///   - Terminals (Terminal.app, iTerm2, Claude Code) accept the plain-text path.
 ///   - Chat apps (iMessage, Slack, WeChat) accept the file URL and attach.
 ///   - Image-aware editors (Preview, Notes) accept the raw PNG bytes.
+///
+/// Annotations live on `Shot` as a parameterized list; this layer composites
+/// them onto the base image on demand. The on-disk PNG at `shot.url` is the
+/// untouched capture; when annotations exist, a flattened copy is written to a
+/// per-shot cache file so the file-URL/drag flavor reflects the edits too.
 enum MultiFormatPasteboard {
 
     static func makeItemProvider(for shot: Shot) -> NSItemProvider {
-        // `NSItemProvider(contentsOf:)` already vends the file URL plus auto-
-        // derived UTI representations (public.png, public.file-url, …) which
-        // covers the drag case for almost every target app.
-        let provider = NSItemProvider(contentsOf: shot.url) ?? NSItemProvider()
+        let url = exportURL(for: shot) ?? shot.url
+        let provider = NSItemProvider(contentsOf: url) ?? NSItemProvider()
         provider.suggestedName = shot.url.lastPathComponent
         return provider
     }
@@ -23,31 +26,37 @@ enum MultiFormatPasteboard {
         let pb = NSPasteboard.general
         pb.clearContents()
         let item = NSPasteboardItem()
-        item.setString(shot.url.path, forType: .string)
-        item.setString(shot.url.absoluteString, forType: .fileURL)
-        if let data = try? Data(contentsOf: shot.url) {
+        let url = exportURL(for: shot) ?? shot.url
+        item.setString(url.path, forType: .string)
+        item.setString(url.absoluteString, forType: .fileURL)
+        if let data = try? Data(contentsOf: url) {
             item.setData(data, forType: .png)
             item.setData(data, forType: NSPasteboard.PasteboardType(UTType.png.identifier))
         }
         pb.writeObjects([item])
     }
 
-    static func writeImageToClipboard(_ image: NSImage, fallbackPath: URL) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        let item = NSPasteboardItem()
-        item.setString(fallbackPath.path, forType: .string)
-        if let data = pngData(from: image) {
-            item.setData(data, forType: .png)
-            item.setData(data, forType: NSPasteboard.PasteboardType(UTType.png.identifier))
-        }
-        pb.writeObjects([item])
-    }
-
-    private static func pngData(from image: NSImage) -> Data? {
-        guard let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff)
+    /// Returns the on-disk URL of the image that should be vended for this
+    /// shot — the original PNG if there are no annotations, otherwise a
+    /// flattened copy written to a per-session cache. Nil on render failure.
+    static func exportURL(for shot: Shot) -> URL? {
+        if shot.annotations.isEmpty { return shot.url }
+        guard let flattened = shot.image.flattening(shot.annotations),
+              let data = flattened.pngData()
         else { return nil }
-        return bitmap.representation(using: .png, properties: [:])
+        let url = flattenedCacheURL(for: shot)
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    private static func flattenedCacheURL(for shot: Shot) -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ContextSnap-flattened", isDirectory: true)
+        return dir.appendingPathComponent("\(shot.id.uuidString).png")
     }
 }

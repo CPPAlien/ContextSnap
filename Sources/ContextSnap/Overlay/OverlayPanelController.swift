@@ -233,16 +233,11 @@ final class OverlayPanelController {
         preview.onNext = { [weak self] in self?.showNextPreview() }
         preview.contentView = NSHostingView(
             rootView: ShotPreviewView(
-                shot: shot,
+                model: model,
+                shotID: shot.id,
+                fallbackShot: shot,
                 canGoPrevious: previousShot(before: shot.id) != nil,
                 canGoNext: nextShot(after: shot.id) != nil,
-                onCopy: { MultiFormatPasteboard.writeToClipboard(shot) },
-                onImageChanged: { [weak self] image in
-                    self?.model.updateImage(for: shot.id, image: image)
-                },
-                onImageReset: { [weak self] in
-                    self?.model.resetImage(for: shot.id)
-                },
                 onPrevious: { [weak self] in self?.showPreviousPreview() },
                 onNext: { [weak self] in self?.showNextPreview() },
                 onClose: { [weak self] in self?.closePreview() }
@@ -308,6 +303,9 @@ final class OverlayPanelController {
         guard localPreviewEscapeMonitor == nil, globalPreviewEscapeMonitor == nil else { return }
 
         localPreviewEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // While a text field is first responder (editing an annotation),
+            // let the field handle navigation/escape itself.
+            if event.window?.firstResponder is NSText { return event }
             switch event.keyCode {
             case 53:
                 self?.closePreview()

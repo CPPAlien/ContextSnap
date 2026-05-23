@@ -4,18 +4,18 @@ import ScreenCaptureKit
 struct Shot: Identifiable, Equatable {
     let id = UUID()
     let url: URL
-    var image: NSImage
-    let originalImage: NSImage
-    var isEdited = false
+    let image: NSImage
+    var annotations: [Annotation] = []
 
-    init(url: URL, image: NSImage, originalImage: NSImage? = nil, isEdited: Bool = false) {
+    init(url: URL, image: NSImage, annotations: [Annotation] = []) {
         self.url = url
         self.image = image
-        self.originalImage = originalImage ?? image
-        self.isEdited = isEdited
+        self.annotations = annotations
     }
 
-    static func == (lhs: Shot, rhs: Shot) -> Bool { lhs.id == rhs.id }
+    static func == (lhs: Shot, rhs: Shot) -> Bool {
+        lhs.id == rhs.id && lhs.annotations == rhs.annotations
+    }
 }
 
 @MainActor
