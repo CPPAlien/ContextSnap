@@ -7,6 +7,15 @@ struct ShotStackView: View {
     let onLayoutChange: () -> Void
     @State private var isCollapsed = false
 
+    private func requestLayoutUpdate() {
+        DispatchQueue.main.async {
+            onLayoutChange()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+            onLayoutChange()
+        }
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             StackHeader(
@@ -14,7 +23,7 @@ struct ShotStackView: View {
                 isCollapsed: isCollapsed,
                 onToggle: {
                     isCollapsed.toggle()
-                    onLayoutChange()
+                    requestLayoutUpdate()
                 }
             )
                 .frame(height: 22)
@@ -34,6 +43,9 @@ struct ShotStackView: View {
         .frame(maxWidth: .infinity, alignment: .top)
         .animation(.easeInOut(duration: 0.18), value: model.shots.count)
         .animation(.easeInOut(duration: 0.18), value: isCollapsed)
+        .onChange(of: model.shots.count) { _ in
+            requestLayoutUpdate()
+        }
     }
 }
 

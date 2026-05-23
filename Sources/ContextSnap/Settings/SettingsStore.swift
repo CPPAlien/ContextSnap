@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import Combine
+import ServiceManagement
 
 final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
@@ -24,6 +25,13 @@ final class SettingsStore: ObservableObject {
     @Published var showStack: Bool {
         didSet { UserDefaults.standard.set(showStack, forKey: Key.showStack) }
     }
+    @Published private(set) var launchAtLogin: Bool
+    @Published var launchAtLoginError: String?
+
+    var canManageLaunchAtLogin: Bool {
+        if #available(macOS 13.0, *) { return true }
+        return false
+    }
 
     private init() {
         let d = UserDefaults.standard
@@ -39,6 +47,43 @@ final class SettingsStore: ObservableObject {
             self.saveDirectory = base.appendingPathComponent("ContextSnap")
         }
         self.showStack = d.object(forKey: Key.showStack) as? Bool ?? true
+        if #available(macOS 13.0, *) {
+            self.launchAtLogin = SMAppService.mainApp.status == .enabled
+        } else {
+            self.launchAtLogin = false
+        }
+    }
+
+    func refreshLaunchAtLogin() {
+        guard #available(macOS 13.0, *) else {
+            launchAtLogin = false
+            return
+        }
+        launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        guard #available(macOS 13.0, *) else {
+            launchAtLogin = false
+            launchAtLoginError = "Launch at login requires macOS 13 or later."
+            return
+        }
+
+        launchAtLoginError = nil
+        let previous = launchAtLogin
+        launchAtLogin = enabled
+
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            refreshLaunchAtLogin()
+        } catch {
+            launchAtLogin = previous
+            launchAtLoginError = error.localizedDescription
+        }
     }
 }
 

@@ -76,6 +76,28 @@ struct SettingsView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 6) {
+                Toggle(
+                    "Launch ContextSnap at login",
+                    isOn: Binding(
+                        get: { store.launchAtLogin },
+                        set: { store.setLaunchAtLogin($0) }
+                    )
+                )
+                .disabled(!store.canManageLaunchAtLogin)
+
+                if let error = store.launchAtLoginError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                } else {
+                    Text("Starts the app automatically when you sign in.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Save location").font(.headline)
                 HStack {
                     Text(store.saveDirectory.path)
@@ -94,6 +116,9 @@ struct SettingsView: View {
         }
         .padding(20)
         .frame(width: 480)
+        .onAppear {
+            store.refreshLaunchAtLogin()
+        }
     }
 
     private func chooseDirectory() {

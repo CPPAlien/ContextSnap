@@ -15,7 +15,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         overlay = OverlayPanelController()
-        setupStatusItem()
+        // On some macOS 15.x systems, creating the status item during the
+        // launch notification can silently fail to surface in SystemUIServer.
+        // Defer it one runloop turn so NSApp has fully settled.
+        DispatchQueue.main.async { [weak self] in
+            self?.setupStatusItem()
+        }
         reloadHotkey()
 
         Publishers.CombineLatest(settings.$hotkeyKeyCode, settings.$hotkeyModifiers)
@@ -32,9 +37,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem.isVisible = true
         if let button = statusItem.button {
             button.image = Self.makeStatusIcon()
+            button.imagePosition = .imageOnly
+            button.title = ""
+            button.toolTip = "ContextSnap"
         }
         let menu = NSMenu()
         captureMenuItem = NSMenuItem(title: captureMenuTitle, action: #selector(capture), keyEquivalent: "")
@@ -78,6 +87,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private static func makeStatusIcon() -> NSImage {
+        if let image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "ContextSnap") {
+            image.isTemplate = true
+            return image
+        }
+
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { rect in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
@@ -123,7 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showSettings() {
         if settingsWindow == nil {
             let w = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 480, height: 260),
+                contentRect: NSRect(x: 0, y: 0, width: 480, height: 330),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false
