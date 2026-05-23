@@ -283,11 +283,15 @@ private struct MarkupImageView: View {
 
     private func textEditor(at index: Int, imageRect: CGRect, scale: CGFloat) -> some View {
         let annotation = annotations[index]
+        let id = annotation.id
         let point = AnnotationGeometry.viewPoint(from: annotation.points[0], imageRect: imageRect, imageSize: image.size)
         let fontSize = (annotation.fontSize > 0 ? annotation.fontSize : AnnotationStyle.imageTextFontSize(imageSize: image.size, imageRect: imageRect)) * scale
         return TextField("", text: Binding(
-            get: { annotations[index].text },
-            set: { annotations[index].text = $0 }
+            get: { annotations.text(forID: id) },
+            set: { newValue in
+                guard let i = annotations.firstIndex(where: { $0.id == id }) else { return }
+                annotations[i].text = newValue
+            }
         ))
         .textFieldStyle(.plain)
         .font(.system(size: fontSize, weight: .bold))

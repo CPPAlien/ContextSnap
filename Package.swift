@@ -9,5 +9,10 @@ let package = Package(
             name: "ContextSnap",
             path: "Sources/ContextSnap"
         ),
+        .testTarget(
+            name: "ContextSnapTests",
+            dependencies: ["ContextSnap"],
+            path: "Tests/ContextSnapTests"
+        ),
     ]
 )

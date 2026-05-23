@@ -117,6 +117,21 @@ enum AnnotationGeometry {
     }
 }
 
+extension Array where Element == Annotation {
+    /// By-ID accessors used by the in-preview text editor binding. Using the
+    /// id (rather than a captured array index) survives the parent list being
+    /// mutated mid-edit — e.g. when an empty text annotation is filtered out
+    /// at the same moment AppKit posts a delayed controlTextDidEndEditing.
+    func text(forID id: UUID) -> String {
+        first(where: { $0.id == id })?.text ?? ""
+    }
+
+    mutating func setText(_ newValue: String, forID id: UUID) {
+        guard let i = firstIndex(where: { $0.id == id }) else { return }
+        self[i].text = newValue
+    }
+}
+
 extension Annotation {
     /// Draw into a SwiftUI Canvas. Coordinates are in image (logical) space —
     /// the caller passes the on-screen rect the image is fitted into.
