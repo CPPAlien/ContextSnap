@@ -31,4 +31,23 @@ enum MultiFormatPasteboard {
         }
         pb.writeObjects([item])
     }
+
+    static func writeImageToClipboard(_ image: NSImage, fallbackPath: URL) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(fallbackPath.path, forType: .string)
+        if let data = pngData(from: image) {
+            item.setData(data, forType: .png)
+            item.setData(data, forType: NSPasteboard.PasteboardType(UTType.png.identifier))
+        }
+        pb.writeObjects([item])
+    }
+
+    private static func pngData(from image: NSImage) -> Data? {
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff)
+        else { return nil }
+        return bitmap.representation(using: .png, properties: [:])
+    }
 }

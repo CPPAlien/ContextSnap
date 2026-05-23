@@ -3,7 +3,16 @@ import AppKit
 struct Shot: Identifiable, Equatable {
     let id = UUID()
     let url: URL
-    let image: NSImage
+    var image: NSImage
+    let originalImage: NSImage
+    var isEdited = false
+
+    init(url: URL, image: NSImage, originalImage: NSImage? = nil, isEdited: Bool = false) {
+        self.url = url
+        self.image = image
+        self.originalImage = originalImage ?? image
+        self.isEdited = isEdited
+    }
 
     static func == (lhs: Shot, rhs: Shot) -> Bool { lhs.id == rhs.id }
 }

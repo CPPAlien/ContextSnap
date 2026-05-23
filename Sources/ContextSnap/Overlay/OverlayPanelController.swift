@@ -237,6 +237,12 @@ final class OverlayPanelController {
                 canGoPrevious: previousShot(before: shot.id) != nil,
                 canGoNext: nextShot(after: shot.id) != nil,
                 onCopy: { MultiFormatPasteboard.writeToClipboard(shot) },
+                onImageChanged: { [weak self] image in
+                    self?.model.updateImage(for: shot.id, image: image)
+                },
+                onImageReset: { [weak self] in
+                    self?.model.resetImage(for: shot.id)
+                },
                 onPrevious: { [weak self] in self?.showPreviousPreview() },
                 onNext: { [weak self] in self?.showNextPreview() },
                 onClose: { [weak self] in self?.closePreview() }
@@ -429,6 +435,10 @@ private final class PreviewPanel: NSPanel {
 
     override func sendEvent(_ event: NSEvent) {
         guard event.type == .keyDown else {
+            super.sendEvent(event)
+            return
+        }
+        if firstResponder is NSTextView {
             super.sendEvent(event)
             return
         }
