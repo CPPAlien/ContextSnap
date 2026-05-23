@@ -86,25 +86,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.clear()
     }
 
+    /// Status-bar icon that mirrors the app icon's structure: two tilted
+    /// stacked cards inside four viewfinder corner brackets. Drawn as a
+    /// template so macOS recolors it for light/dark menu bars.
     private static func makeStatusIcon() -> NSImage {
-        if let image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "ContextSnap") {
-            image.isTemplate = true
-            return image
-        }
-
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { rect in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
             let s = rect.width
-            NSColor.black.setStroke()
-            NSColor.black.setFill()
+
+            // Two stacked rounded-square cards, rotations mirroring the
+            // app icon (+0.20 / -0.08 rad). Back card lighter via alpha so
+            // it reads as a stack even in a tiny template glyph.
+            let cardSize = s * 0.46
+            let cardRadius = cardSize * 0.20
+            let center = CGPoint(x: s / 2, y: s / 2)
+
+            func drawCard(rotation: CGFloat, alpha: CGFloat) {
+                ctx.saveGState()
+                ctx.translateBy(x: center.x, y: center.y)
+                ctx.rotate(by: rotation)
+                let r = CGRect(x: -cardSize / 2, y: -cardSize / 2, width: cardSize, height: cardSize)
+                ctx.addPath(CGPath(roundedRect: r, cornerWidth: cardRadius, cornerHeight: cardRadius, transform: nil))
+                ctx.setFillColor(CGColor(gray: 0, alpha: alpha))
+                ctx.fillPath()
+                ctx.restoreGState()
+            }
+            drawCard(rotation: 0.20, alpha: 0.45)
+            drawCard(rotation: -0.08, alpha: 1.0)
+
+            // Viewfinder corner brackets, sized so the brackets just clear
+            // the tilted front card.
+            let inset = s * 0.04
+            let bracketLen = s * 0.22
+            let bracketWidth = s * 0.10
+            ctx.setStrokeColor(CGColor(gray: 0, alpha: 1))
+            ctx.setLineWidth(bracketWidth)
             ctx.setLineCap(.round)
             ctx.setLineJoin(.round)
-
-            // Viewfinder brackets
-            let inset = s * 0.06
-            let bracketLen = s * 0.26
-            ctx.setLineWidth(s * 0.11)
             let r = CGRect(x: inset, y: inset, width: s - 2 * inset, height: s - 2 * inset)
             func corner(_ ax: CGFloat, _ ay: CGFloat, _ bx: CGFloat, _ by: CGFloat, _ cx: CGFloat, _ cy: CGFloat) {
                 ctx.move(to: CGPoint(x: ax, y: ay))
@@ -116,18 +135,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             corner(r.minX, r.minY + bracketLen, r.minX, r.minY, r.minX + bracketLen, r.minY)
             corner(r.maxX - bracketLen, r.minY, r.maxX, r.minY, r.maxX, r.minY + bracketLen)
             ctx.strokePath()
-
-            // Center filled card (echoes the stack motif from app icon)
-            let cardSize = s * 0.40
-            let cx = s / 2, cy = s / 2
-            let cardRect = CGRect(x: cx - cardSize / 2, y: cy - cardSize / 2,
-                                  width: cardSize, height: cardSize)
-            let cardPath = CGPath(roundedRect: cardRect,
-                                  cornerWidth: cardSize * 0.22,
-                                  cornerHeight: cardSize * 0.22,
-                                  transform: nil)
-            ctx.addPath(cardPath)
-            ctx.fillPath()
             return true
         }
         image.isTemplate = true
