@@ -14,7 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = SettingsStore.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        overlay = OverlayPanelController()
+        overlay = OverlayPanelController(onCaptureRequested: { [weak self] in
+            self?.capture()
+        })
+        overlay.applyVisibility()
         // On some macOS 15.x systems, creating the status item during the
         // launch notification can silently fail to surface in SystemUIServer.
         // Defer it one runloop turn so NSApp has fully settled.
@@ -29,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _, _ in self?.reloadHotkey() }
             .store(in: &cancellables)
 
-        settings.$showStack
+        settings.$persistentIcon
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.overlay.applyVisibility() }

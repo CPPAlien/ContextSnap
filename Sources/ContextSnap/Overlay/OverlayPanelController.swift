@@ -18,7 +18,10 @@ final class OverlayPanelController {
     private static let panelWidth: CGFloat = 176
     private static let edgeInset: CGFloat = 24
 
-    init() {
+    private let onCaptureRequested: () -> Void
+
+    init(onCaptureRequested: @escaping () -> Void = {}) {
+        self.onCaptureRequested = onCaptureRequested
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let rect = NSRect(
             x: screen.maxX - Self.panelWidth - Self.edgeInset,
@@ -55,6 +58,12 @@ final class OverlayPanelController {
                     DispatchQueue.main.async {
                         self?.resizeToFit()
                     }
+                },
+                onCaptureRequested: { [weak self] in
+                    self?.onCaptureRequested()
+                },
+                onImport: { [weak self] image in
+                    self?.importImage(image)
                 }
             )
         )
@@ -101,31 +110,46 @@ final class OverlayPanelController {
             .store(in: &cancellables)
     }
 
+    func importImage(_ image: NSImage) {
+        guard let png = pngData(for: image) else { return }
+        let url = ShotStore.newURL()
+        try? png.write(to: url)
+        let canonical = NSImage(data: png) ?? image
+        add(Shot(url: url, image: canonical))
+    }
+
+    private func pngData(for image: NSImage) -> Data? {
+        if let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            return png
+        }
+        if let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            let rep = NSBitmapImageRep(cgImage: cg)
+            return rep.representation(using: .png, properties: [:])
+        }
+        return nil
+    }
+
     func add(_ shot: Shot) {
         model.append(shot)
-        if SettingsStore.shared.showStack {
-            if !panel.isVisible {
-                panel.orderFrontRegardless()
-            }
-            startScreenFollow()
-            DispatchQueue.main.async { [weak self] in
-                self?.followCurrentScreen(force: true)
-            }
-        } else if panel.isVisible {
-            panel.orderOut(nil)
-            stopScreenFollow()
+        if !panel.isVisible {
+            panel.orderFrontRegardless()
+        }
+        startScreenFollow()
+        DispatchQueue.main.async { [weak self] in
+            self?.followCurrentScreen(force: true)
         }
     }
 
     func clear() {
         model.clear()
         closePreview()
-        panel.orderOut(nil)
-        stopScreenFollow()
+        applyVisibility()
     }
 
     func applyVisibility() {
-        let shouldShow = SettingsStore.shared.showStack && !model.shots.isEmpty
+        let shouldShow = !model.shots.isEmpty || SettingsStore.shared.persistentIcon
         if shouldShow {
             if !panel.isVisible { panel.orderFrontRegardless() }
             startScreenFollow()

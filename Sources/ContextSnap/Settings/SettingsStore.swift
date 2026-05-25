@@ -10,7 +10,7 @@ final class SettingsStore: ObservableObject {
         static let keyCode = "hotkey.keyCode"
         static let modifiers = "hotkey.modifiers"
         static let saveDirectory = "saveDirectory"
-        static let showStack = "showStack"
+        static let persistentIcon = "persistentIcon"
     }
 
     @Published var hotkeyKeyCode: UInt32 {
@@ -22,8 +22,8 @@ final class SettingsStore: ObservableObject {
     @Published var saveDirectory: URL {
         didSet { UserDefaults.standard.set(saveDirectory.path, forKey: Key.saveDirectory) }
     }
-    @Published var showStack: Bool {
-        didSet { UserDefaults.standard.set(showStack, forKey: Key.showStack) }
+    @Published var persistentIcon: Bool {
+        didSet { UserDefaults.standard.set(persistentIcon, forKey: Key.persistentIcon) }
     }
     @Published private(set) var launchAtLogin: Bool
     @Published var launchAtLoginError: String?
@@ -46,7 +46,7 @@ final class SettingsStore: ObservableObject {
             let base = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
             self.saveDirectory = base.appendingPathComponent("ContextSnap")
         }
-        self.showStack = d.object(forKey: Key.showStack) as? Bool ?? true
+        self.persistentIcon = d.object(forKey: Key.persistentIcon) as? Bool ?? false
         if #available(macOS 13.0, *) {
             self.launchAtLogin = SMAppService.mainApp.status == .enabled
         } else {

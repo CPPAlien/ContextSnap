@@ -68,8 +68,8 @@ struct SettingsView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 6) {
-                Toggle("Show stack overlay after capture", isOn: $store.showStack)
-                Text("When off, captures are still copied to the clipboard but the floating stack is hidden.")
+                Toggle("Floating shortcut", isOn: $store.persistentIcon)
+                Text("Pins a small ContextSnap icon to the top-right of the active screen. Click it to start a capture.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

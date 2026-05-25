@@ -1,11 +1,15 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ShotStackView: View {
     @ObservedObject var model: ShotStack
     let onPreview: (Shot) -> Void
     let onLayoutChange: () -> Void
+    let onCaptureRequested: () -> Void
+    let onImport: (NSImage) -> Void
     @State private var isCollapsed = false
+    @State private var isDropTargeted = false
 
     private func requestLayoutUpdate() {
         DispatchQueue.main.async {
@@ -17,35 +21,74 @@ struct ShotStackView: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
-            StackHeader(
-                count: model.shots.count,
-                isCollapsed: isCollapsed,
-                onToggle: {
-                    isCollapsed.toggle()
-                    requestLayoutUpdate()
-                }
-            )
-                .frame(height: 22)
-            if !isCollapsed {
-                ForEach(model.shots.reversed()) { shot in
-                    ShotTileView(
-                        shot: shot,
-                        isSelected: model.selectedID == shot.id,
-                        onSelect: { model.selectedID = shot.id },
-                        onPreview: { onPreview(shot) },
-                        onClose: { model.remove(shot) }
+        Group {
+            if model.shots.isEmpty {
+                PersistentIconView(onCaptureRequested: onCaptureRequested)
+                    .padding(10)
+            } else {
+                VStack(spacing: 8) {
+                    StackHeader(
+                        count: model.shots.count,
+                        isCollapsed: isCollapsed,
+                        onToggle: {
+                            isCollapsed.toggle()
+                            requestLayoutUpdate()
+                        }
                     )
+                        .frame(height: 22)
+                    if !isCollapsed {
+                        ForEach(model.shots.reversed()) { shot in
+                            ShotTileView(
+                                shot: shot,
+                                isSelected: model.selectedID == shot.id,
+                                onSelect: { model.selectedID = shot.id },
+                                onPreview: { onPreview(shot) },
+                                onClose: { model.remove(shot) }
+                            )
+                        }
+                    }
                 }
+                .padding(10)
             }
         }
-        .padding(10)
         .frame(maxWidth: .infinity, alignment: .top)
+        .overlay(alignment: .trailing) {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [5, 4]))
+                    .padding(6)
+                    .allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [.image, .fileURL], isTargeted: $isDropTargeted) { providers in
+            handleDrop(providers: providers)
+        }
         .animation(.easeInOut(duration: 0.18), value: model.shots.count)
         .animation(.easeInOut(duration: 0.18), value: isCollapsed)
+        .animation(.easeInOut(duration: 0.12), value: isDropTargeted)
         .onChange(of: model.shots.count) { _ in
             requestLayoutUpdate()
         }
+    }
+
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        var accepted = false
+        for provider in providers {
+            if provider.canLoadObject(ofClass: URL.self) {
+                accepted = true
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url, let image = NSImage(contentsOf: url) else { return }
+                    Task { @MainActor in onImport(image) }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                accepted = true
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    guard let data, let image = NSImage(data: data) else { return }
+                    Task { @MainActor in onImport(image) }
+                }
+            }
+        }
+        return accepted
     }
 }
 
@@ -80,6 +123,172 @@ private struct StackHeader: View {
                 .help(isCollapsed ? "Expand stack" : "Collapse stack")
             }
             .padding(.horizontal, 4)
+        }
+    }
+}
+
+struct PersistentIconView: View {
+    let onCaptureRequested: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            DraggableClickArea(onClick: onCaptureRequested) {
+                PersistentIconShape()
+                    .frame(width: 44, height: 44)
+                    .scaleEffect(isHovering ? 1.06 : 1.0)
+                    .animation(.easeOut(duration: 0.12), value: isHovering)
+            }
+            .onHover { isHovering = $0 }
+            .help("Click to capture · drag to move")
+            .frame(width: 44, height: 44)
+        }
+    }
+}
+
+/// Wraps content so a short click triggers `onClick` while a drag past the
+/// system threshold moves the host window. Lets the floating icon serve
+/// double duty as both button and drag handle.
+private struct DraggableClickArea<Content: View>: NSViewRepresentable {
+    let onClick: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    func makeNSView(context: Context) -> NSView {
+        let host = NSHostingView(rootView: content())
+        host.translatesAutoresizingMaskIntoConstraints = false
+        let container = ClickOrDragView()
+        container.onClick = onClick
+        container.addSubview(host)
+        NSLayoutConstraint.activate([
+            host.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            host.topAnchor.constraint(equalTo: container.topAnchor),
+            host.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        return container
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let container = nsView as? ClickOrDragView {
+            container.onClick = onClick
+        }
+        if let host = nsView.subviews.first as? NSHostingView<Content> {
+            host.rootView = content()
+        }
+    }
+}
+
+private final class ClickOrDragView: NSView {
+    var onClick: (() -> Void)?
+    private var downLocation: NSPoint = .zero
+    private var dragged = false
+    private let dragThreshold: CGFloat = 4
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        downLocation = event.locationInWindow
+        dragged = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !dragged else { return }
+        let dx = event.locationInWindow.x - downLocation.x
+        let dy = event.locationInWindow.y - downLocation.y
+        if dx * dx + dy * dy > dragThreshold * dragThreshold {
+            dragged = true
+            NSCursor.closedHand.set()
+            window?.performDrag(with: event)
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        NSCursor.openHand.set()
+        if !dragged { onClick?() }
+    }
+}
+
+/// Logo-inspired floating glyph: gradient squircle, stacked cards, viewfinder
+/// brackets. Visually echoes the app icon but smaller and slightly simplified.
+private struct PersistentIconShape: View {
+    var body: some View {
+        Canvas { context, size in
+            let s = min(size.width, size.height)
+            let rect = CGRect(x: (size.width - s) / 2, y: (size.height - s) / 2, width: s, height: s)
+            let radius = s * 0.2237
+
+            // Gradient squircle background (matches app icon palette).
+            let bgPath = Path(roundedRect: rect, cornerRadius: radius)
+            context.fill(
+                bgPath,
+                with: .linearGradient(
+                    Gradient(colors: [
+                        Color(red: 0.31, green: 0.55, blue: 1.00),
+                        Color(red: 0.48, green: 0.36, blue: 1.00),
+                    ]),
+                    startPoint: CGPoint(x: rect.minX, y: rect.maxY),
+                    endPoint: CGPoint(x: rect.maxX, y: rect.minY)
+                )
+            )
+
+            // Drop a soft outer shadow via stroke for definition on busy desktops.
+            context.stroke(bgPath, with: .color(.black.opacity(0.18)), lineWidth: 0.5)
+
+            // Two stacked cards, tilted like the app icon.
+            let cardSize = s * 0.44
+            let cardRadius = cardSize * 0.14
+            let center = CGPoint(x: rect.midX, y: rect.midY)
+
+            func cardPath(rotation: CGFloat) -> Path {
+                let transform = CGAffineTransform.identity
+                    .translatedBy(x: center.x, y: center.y)
+                    .rotated(by: rotation)
+                    .translatedBy(x: -cardSize / 2, y: -cardSize / 2)
+                let base = Path(roundedRect: CGRect(x: 0, y: 0, width: cardSize, height: cardSize),
+                                cornerRadius: cardRadius)
+                return base.applying(transform)
+            }
+            context.fill(cardPath(rotation: 0.20), with: .color(.white.opacity(0.55)))
+            context.fill(cardPath(rotation: -0.08), with: .color(.white))
+
+            // Viewfinder corner brackets.
+            let bracketLength = s * 0.16
+            let bracketWidth = s * 0.05
+            let bracketInset = s * 0.115
+            let outer = CGRect(
+                x: rect.minX + bracketInset,
+                y: rect.minY + bracketInset,
+                width: rect.width - 2 * bracketInset,
+                height: rect.height - 2 * bracketInset
+            )
+            var brackets = Path()
+            // Top-left
+            brackets.move(to: CGPoint(x: outer.minX, y: outer.minY + bracketLength))
+            brackets.addLine(to: CGPoint(x: outer.minX, y: outer.minY))
+            brackets.addLine(to: CGPoint(x: outer.minX + bracketLength, y: outer.minY))
+            // Top-right
+            brackets.move(to: CGPoint(x: outer.maxX - bracketLength, y: outer.minY))
+            brackets.addLine(to: CGPoint(x: outer.maxX, y: outer.minY))
+            brackets.addLine(to: CGPoint(x: outer.maxX, y: outer.minY + bracketLength))
+            // Bottom-left
+            brackets.move(to: CGPoint(x: outer.minX, y: outer.maxY - bracketLength))
+            brackets.addLine(to: CGPoint(x: outer.minX, y: outer.maxY))
+            brackets.addLine(to: CGPoint(x: outer.minX + bracketLength, y: outer.maxY))
+            // Bottom-right
+            brackets.move(to: CGPoint(x: outer.maxX - bracketLength, y: outer.maxY))
+            brackets.addLine(to: CGPoint(x: outer.maxX, y: outer.maxY))
+            brackets.addLine(to: CGPoint(x: outer.maxX, y: outer.maxY - bracketLength))
+            context.stroke(
+                brackets,
+                with: .color(.white),
+                style: StrokeStyle(lineWidth: bracketWidth, lineCap: .round, lineJoin: .round)
+            )
         }
     }
 }
