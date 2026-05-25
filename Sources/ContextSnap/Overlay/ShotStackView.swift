@@ -2,24 +2,6 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Append a line to ~/Library/Logs/ContextSnap.log. Unified logging swallows
-/// output from this app for unclear reasons, so we keep a file we can tail
-/// directly when triaging drag/drop issues.
-private func snapLog(_ message: String) {
-    NSLog("[ContextSnap] %@", message)
-    let url = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent("Library/Logs/ContextSnap.log")
-    let line = "[\(Date())] \(message)\n"
-    guard let data = line.data(using: .utf8) else { return }
-    if let handle = try? FileHandle(forWritingTo: url) {
-        defer { try? handle.close() }
-        _ = try? handle.seekToEnd()
-        try? handle.write(contentsOf: data)
-    } else {
-        try? data.write(to: url)
-    }
-}
-
 struct ShotStackView: View {
     @ObservedObject var model: ShotStack
     let onPreview: (Shot) -> Void
@@ -154,9 +136,7 @@ private final class DropCatcherView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        let pb = sender.draggingPasteboard
-        snapLog("dragEnter types: \(pb.types?.map(\.rawValue) ?? [])")
-        guard hasUsablePayload(pb) else { return [] }
+        guard hasUsablePayload(sender.draggingPasteboard) else { return [] }
         onTargetedChange?(true)
         return .copy
     }
@@ -178,9 +158,7 @@ private final class DropCatcherView: NSView {
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let pb = sender.draggingPasteboard
-        snapLog("performDrag types: \(pb.types?.map(\.rawValue) ?? [])")
-        return handle(pasteboard: pb)
+        handle(pasteboard: sender.draggingPasteboard)
     }
 
     private func hasUsablePayload(_ pb: NSPasteboard) -> Bool {
@@ -203,25 +181,21 @@ private final class DropCatcherView: NSView {
         for raw in imageTypes {
             let type = NSPasteboard.PasteboardType(raw)
             if let data = pb.data(forType: type), let image = NSImage(data: data) {
-                snapLog("imported via pasteboard \(raw) (\(data.count) bytes)")
                 deliver(image)
                 return true
             }
         }
 
         if let url = readFileURL(pb), let image = NSImage(contentsOf: url) {
-            snapLog("imported via file URL \(url.path)")
             deliver(image)
             return true
         }
 
         if let url = readWebURL(pb) {
-            snapLog("fetching dropped URL: \(url)")
             fetchImage(from: url)
             return true
         }
 
-        snapLog("drop pasteboard had no usable payload")
         return false
     }
 
@@ -257,13 +231,8 @@ private final class DropCatcherView: NSView {
     private func fetchImage(from url: URL) {
         var request = URLRequest(url: url, timeoutInterval: 15)
         request.setValue("image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            if let error { snapLog("fetch error: \(error.localizedDescription)") }
-            if let http = response as? HTTPURLResponse { snapLog("fetch status: \(http.statusCode), bytes=\(data?.count ?? -1)") }
-            guard let data, let image = NSImage(data: data) else {
-                snapLog("fetch produced no usable image")
-                return
-            }
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            guard let data, let image = NSImage(data: data) else { return }
             self?.deliver(image)
         }.resume()
     }
