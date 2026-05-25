@@ -2,6 +2,24 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Append a line to ~/Library/Logs/ContextSnap.log. Unified logging swallows
+/// output from this app for unclear reasons, so we keep a file we can tail
+/// directly when triaging drag/drop issues.
+private func snapLog(_ message: String) {
+    NSLog("[ContextSnap] %@", message)
+    let url = URL(fileURLWithPath: NSHomeDirectory())
+        .appendingPathComponent("Library/Logs/ContextSnap.log")
+    let line = "[\(Date())] \(message)\n"
+    guard let data = line.data(using: .utf8) else { return }
+    if let handle = try? FileHandle(forWritingTo: url) {
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
+    } else {
+        try? data.write(to: url)
+    }
+}
+
 struct ShotStackView: View {
     @ObservedObject var model: ShotStack
     let onPreview: (Shot) -> Void
@@ -60,9 +78,15 @@ struct ShotStackView: View {
                     .allowsHitTesting(false)
             }
         }
-        .onDrop(of: [.image, .fileURL], isTargeted: $isDropTargeted) { providers in
-            handleDrop(providers: providers)
-        }
+        .background(
+            // AppKit-level drop target. SwiftUI's .onDrop re-wraps providers
+            // in a way that severs Chrome's lazy data provider, so we read
+            // the original draggingPasteboard ourselves.
+            DropCatcher(
+                isTargeted: $isDropTargeted,
+                onImport: onImport
+            )
+        )
         .animation(.easeInOut(duration: 0.18), value: model.shots.count)
         .animation(.easeInOut(duration: 0.18), value: isCollapsed)
         .animation(.easeInOut(duration: 0.12), value: isDropTargeted)
@@ -71,24 +95,182 @@ struct ShotStackView: View {
         }
     }
 
-    private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        var accepted = false
-        for provider in providers {
-            if provider.canLoadObject(ofClass: URL.self) {
-                accepted = true
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url, let image = NSImage(contentsOf: url) else { return }
-                    Task { @MainActor in onImport(image) }
-                }
-            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-                accepted = true
-                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
-                    guard let data, let image = NSImage(data: data) else { return }
-                    Task { @MainActor in onImport(image) }
-                }
+}
+
+// MARK: - AppKit drop catcher
+
+/// Transparent NSView overlay that registers as an NSDraggingDestination and
+/// reads directly from `sender.draggingPasteboard`. Bypassing SwiftUI's
+/// `.onDrop` is necessary because that path re-wraps providers and severs
+/// Chrome's lazy `public.png` data provider — by the time the rewrapped
+/// NSItemProvider's load methods run, the source app's promise is gone.
+private struct DropCatcher: NSViewRepresentable {
+    @Binding var isTargeted: Bool
+    let onImport: (NSImage) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = DropCatcherView()
+        view.onTargetedChange = { targeted in
+            DispatchQueue.main.async { isTargeted = targeted }
+        }
+        view.onImport = onImport
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let view = nsView as? DropCatcherView {
+            view.onTargetedChange = { targeted in
+                DispatchQueue.main.async { isTargeted = targeted }
+            }
+            view.onImport = onImport
+        }
+    }
+}
+
+private final class DropCatcherView: NSView {
+    var onTargetedChange: ((Bool) -> Void)?
+    var onImport: ((NSImage) -> Void)?
+
+    private static let acceptedTypes: [NSPasteboard.PasteboardType] = [
+        .png, .tiff, .fileURL, .URL, .string,
+        NSPasteboard.PasteboardType("public.jpeg"),
+        NSPasteboard.PasteboardType("public.heic"),
+        NSPasteboard.PasteboardType("public.webp"),
+        NSPasteboard.PasteboardType("com.compuserve.gif"),
+        NSPasteboard.PasteboardType("public.image"),
+    ]
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes(Self.acceptedTypes)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        registerForDraggedTypes(Self.acceptedTypes)
+    }
+
+    // Transparent — let clicks and mouse events pass through to siblings.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let pb = sender.draggingPasteboard
+        snapLog("dragEnter types: \(pb.types?.map(\.rawValue) ?? [])")
+        guard hasUsablePayload(pb) else { return [] }
+        onTargetedChange?(true)
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        hasUsablePayload(sender.draggingPasteboard) ? .copy : []
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        onTargetedChange?(false)
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        onTargetedChange?(false)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        hasUsablePayload(sender.draggingPasteboard)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+        snapLog("performDrag types: \(pb.types?.map(\.rawValue) ?? [])")
+        return handle(pasteboard: pb)
+    }
+
+    private func hasUsablePayload(_ pb: NSPasteboard) -> Bool {
+        guard let types = pb.types else { return false }
+        let usable: Set<String> = [
+            "public.png", "public.jpeg", "public.tiff", "public.heic",
+            "public.webp", "com.compuserve.gif", "public.image",
+            "public.file-url", "public.url", "public.utf8-plain-text",
+            "public.plain-text", "public.text",
+        ]
+        return types.contains { usable.contains($0.rawValue) }
+    }
+
+    /// Read image bytes / file / URL straight off the pasteboard. We
+    /// intentionally use NSPasteboard rather than NSItemProvider so the
+    /// source app's lazy data providers are still bound to fulfill.
+    private func handle(pasteboard pb: NSPasteboard) -> Bool {
+        let imageTypes = ["public.png", "public.jpeg", "public.tiff", "public.heic",
+                          "public.webp", "com.compuserve.gif", "public.image"]
+        for raw in imageTypes {
+            let type = NSPasteboard.PasteboardType(raw)
+            if let data = pb.data(forType: type), let image = NSImage(data: data) {
+                snapLog("imported via pasteboard \(raw) (\(data.count) bytes)")
+                deliver(image)
+                return true
             }
         }
-        return accepted
+
+        if let url = readFileURL(pb), let image = NSImage(contentsOf: url) {
+            snapLog("imported via file URL \(url.path)")
+            deliver(image)
+            return true
+        }
+
+        if let url = readWebURL(pb) {
+            snapLog("fetching dropped URL: \(url)")
+            fetchImage(from: url)
+            return true
+        }
+
+        snapLog("drop pasteboard had no usable payload")
+        return false
+    }
+
+    private func readFileURL(_ pb: NSPasteboard) -> URL? {
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           let url = urls.first {
+            return url
+        }
+        if let str = pb.string(forType: .fileURL), let url = URL(string: str), url.isFileURL {
+            return url
+        }
+        return nil
+    }
+
+    private func readWebURL(_ pb: NSPasteboard) -> URL? {
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+           let url = urls.first(where: { $0.scheme == "http" || $0.scheme == "https" }) {
+            return url
+        }
+        if let str = pb.string(forType: .URL),
+           let url = URL(string: str.trimmingCharacters(in: .whitespacesAndNewlines)),
+           url.scheme == "http" || url.scheme == "https" {
+            return url
+        }
+        if let str = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           let url = URL(string: str),
+           url.scheme == "http" || url.scheme == "https" {
+            return url
+        }
+        return nil
+    }
+
+    private func fetchImage(from url: URL) {
+        var request = URLRequest(url: url, timeoutInterval: 15)
+        request.setValue("image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            if let error { snapLog("fetch error: \(error.localizedDescription)") }
+            if let http = response as? HTTPURLResponse { snapLog("fetch status: \(http.statusCode), bytes=\(data?.count ?? -1)") }
+            guard let data, let image = NSImage(data: data) else {
+                snapLog("fetch produced no usable image")
+                return
+            }
+            self?.deliver(image)
+        }.resume()
+    }
+
+    private func deliver(_ image: NSImage) {
+        let handler = onImport
+        DispatchQueue.main.async { handler?(image) }
     }
 }
 
