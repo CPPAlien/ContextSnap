@@ -43,7 +43,18 @@ One capture. One paste. Always the right format.
   furniture. Stack overlay can be hidden via Settings if you only want the
   clipboard behavior.
 
-## Download
+## Install
+
+### Homebrew (recommended)
+
+```bash
+brew install --cask CPPAlien/contextsnap/contextsnap
+```
+
+Homebrew downloads outside Safari's quarantine, so the app launches on
+first run without the `xattr` step described below.
+
+### Manual `.dmg`
 
 Grab the latest `.dmg` from the
 [Releases page](https://github.com/CPPAlien/ContextSnap/releases/latest).
