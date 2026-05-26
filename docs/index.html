@@ -142,6 +142,13 @@
   }
   .cta-secondary:hover { background: var(--bg-soft); transform: translateY(-1px); }
   .cta-sub { margin-top: 18px; color: var(--muted); font-size: 13.5px; }
+  .hero-brew { margin-top: 28px; display: inline-flex; flex-direction: column;
+               align-items: center; gap: 8px; }
+  .hero-brew-label { color: var(--muted-2); font-size: 12.5px;
+                     letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; }
+  .hero-brew code { background: #0a0a0a; color: #f5f5f5;
+                    padding: 10px 18px; border-radius: 999px;
+                    font-size: 13.5px; box-shadow: 0 6px 18px rgba(10,10,10,0.14); }
 
   /* Section primitives */
   .section { max-width: 1040px; margin: 0 auto; padding: 80px 24px; }
@@ -307,6 +314,10 @@
     </a>
   </div>
   <div class="cta-sub">macOS 12.3+ · Apple Silicon &amp; Intel · Free &amp; open source · ~2 MB</div>
+  <div class="hero-brew">
+    <span class="hero-brew-label">or install with Homebrew</span>
+    <code>brew install --cask CPPAlien/contextsnap/contextsnap</code>
+  </div>
 </section>
 
 <section class="section tight" id="problem">
