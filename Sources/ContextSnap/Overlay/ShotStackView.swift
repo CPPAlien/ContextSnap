@@ -35,7 +35,7 @@ struct ShotStackView: View {
                             requestLayoutUpdate()
                         }
                     )
-                        .frame(height: 22)
+                        .frame(height: 28)
                     if !isCollapsed {
                         ForEach(model.shots.reversed()) { shot in
                             ShotTileView(
@@ -264,13 +264,18 @@ private struct StackHeader: View {
                 Spacer()
 
                 Button(action: onToggle) {
-                    Image(systemName: isCollapsed ? "chevron.down" : "chevron.up")
-                        .font(.system(size: 11, weight: .bold))
-                        .frame(width: 20, height: 20)
+                    ZStack {
+                        Circle()
+                            .fill(.black.opacity(0.35))
+                            .frame(width: 22, height: 22)
+                        Image(systemName: isCollapsed ? "chevron.down" : "chevron.up")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.9))
+                    }
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.9))
-                .background(.black.opacity(0.35), in: Circle())
                 .help(isCollapsed ? "Expand stack" : "Collapse stack")
             }
             .padding(.horizontal, 4)
