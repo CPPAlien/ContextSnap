@@ -207,7 +207,7 @@ final class OverlayPanelController {
     private func startScreenFollow() {
         guard followTimer == nil else { return }
         let timer = Timer(timeInterval: 0.16, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.followCurrentScreen()
             }
         }
@@ -389,7 +389,7 @@ final class OverlayPanelController {
 
         globalPreviewEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return }
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.closePreview()
             }
         }
