@@ -72,11 +72,11 @@ struct ShotPreviewView: View {
             }
             .padding(.horizontal, 14)
 
-            VStack {
-                ZStack {
-                    PreviewDragHandle()
-                        .frame(width: 74, height: 24)
+            VStack(spacing: 6) {
+                PreviewDragHandle()
+                    .frame(width: 74, height: 18)
 
+                ZStack {
                     HStack(spacing: 8) {
                         toolButton(.pen, systemName: "pencil.tip", help: "Pen")
                         toolButton(.arrow, systemName: "arrow.up.right", help: "Arrow")

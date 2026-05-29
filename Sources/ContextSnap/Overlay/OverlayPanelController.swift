@@ -222,40 +222,20 @@ final class OverlayPanelController {
     }
 
     private func showPreview(for shot: Shot) {
+        let isOpeningFromClosed = previewedShotID == nil
         previewedShotID = shot.id
         model.selectedID = shot.id
 
         let anchor = panelVisibleScreenFrame()
             ?? panel.screen?.visibleFrame
             ?? targetScreenFrame()
-        let imageSize = shot.image.size
-        let maxSize = CGSize(width: anchor.width * 0.82, height: anchor.height * 0.82)
-        let imageAspect = imageSize.width / max(imageSize.height, 1)
-        let maxAspect = maxSize.width / max(maxSize.height, 1)
-        let previewSize: CGSize
-
-        if imageAspect > maxAspect {
-            previewSize = CGSize(width: maxSize.width, height: maxSize.width / imageAspect)
-        } else {
-            previewSize = CGSize(width: maxSize.height * imageAspect, height: maxSize.height)
-        }
-
-        let panelSize = CGSize(
-            width: max(previewSize.width + 28, 360),
-            height: max(previewSize.height + 28, 260)
-        )
-        let frame = NSRect(
-            x: anchor.midX - panelSize.width / 2,
-            y: anchor.midY - panelSize.height / 2,
-            width: panelSize.width,
-            height: panelSize.height
-        )
 
         let preview = previewPanel ?? makePreviewPanel()
+        if isOpeningFromClosed { preview.userHasResized = false }
         preview.onClose = { [weak self] in self?.closePreview() }
         preview.onPrevious = { [weak self] in self?.showPreviousPreview() }
         preview.onNext = { [weak self] in self?.showNextPreview() }
-        preview.contentView = NSHostingView(
+        let hosting = NSHostingView(
             rootView: ShotPreviewView(
                 model: model,
                 shotID: shot.id,
@@ -267,17 +247,78 @@ final class OverlayPanelController {
                 onClose: { [weak self] in self?.closePreview() }
             )
         )
-        preview.setFrame(frame, display: true, animate: false)
+        preview.contentView = Self.previewContentView(hosting: hosting)
+
+        if !preview.userHasResized {
+            preview.setFrame(Self.previewFrame(for: shot, anchor: anchor), display: true, animate: false)
+        }
         preview.orderFrontRegardless()
         preview.makeKey()
         previewPanel = preview
         startPreviewEscapeMonitoring()
     }
 
+    /// Natural-size frame: image's point dimensions plus the toolbar chrome,
+    /// clamped to ~95% of the screen so very large captures still fit.
+    private static func previewFrame(for shot: Shot, anchor: NSRect) -> NSRect {
+        let imageSize = shot.image.size
+        let chrome: CGFloat = 30  // 14pt image padding + 1pt outer ring, both sides
+        let availableWidth = max(anchor.width * 0.95 - chrome, 1)
+        let availableHeight = max(anchor.height * 0.95 - chrome, 1)
+        let scale = min(
+            1.0,
+            availableWidth / max(imageSize.width, 1),
+            availableHeight / max(imageSize.height, 1)
+        )
+        let imageDisplaySize = CGSize(
+            width: imageSize.width * scale,
+            height: imageSize.height * scale
+        )
+        let panelSize = CGSize(
+            width: max(imageDisplaySize.width + chrome, 360),
+            height: max(imageDisplaySize.height + chrome, 260)
+        )
+        return NSRect(
+            x: anchor.midX - panelSize.width / 2,
+            y: anchor.midY - panelSize.height / 2,
+            width: panelSize.width,
+            height: panelSize.height
+        )
+    }
+
+    /// Wraps the SwiftUI hosting view with a transparent edge overlay that
+    /// provides resize cursors and drives the actual resize. We do it
+    /// ourselves rather than relying on NSWindow's `.resizable` machinery
+    /// because borderless panels don't get edge-cursor feedback from AppKit.
+    private static func previewContentView(hosting: NSView) -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = true
+        container.autoresizingMask = [.width, .height]
+
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(hosting)
+
+        let resizer = EdgeResizeAffordance()
+        resizer.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(resizer)  // above the hosting view
+
+        NSLayoutConstraint.activate([
+            hosting.topAnchor.constraint(equalTo: container.topAnchor),
+            hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            hosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            resizer.topAnchor.constraint(equalTo: container.topAnchor),
+            resizer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            resizer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            resizer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        ])
+        return container
+    }
+
     private func makePreviewPanel() -> PreviewPanel {
         let panel = PreviewPanel(
-            contentRect: .zero,
-            styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 260),
+            styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -291,6 +332,7 @@ final class OverlayPanelController {
         panel.isMovable = true
         panel.isMovableByWindowBackground = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.contentMinSize = NSSize(width: 360, height: 260)
         return panel
     }
 
@@ -447,13 +489,30 @@ final class OverlayPanelController {
     }
 }
 
-private final class PreviewPanel: NSPanel {
+private final class PreviewPanel: NSPanel, NSWindowDelegate {
     var onClose: (() -> Void)?
     var onPrevious: (() -> Void)?
     var onNext: (() -> Void)?
+    /// True once the user has live-resized this panel — used to skip the
+    /// auto-fit when navigating to a sibling shot in the same session.
+    var userHasResized = false
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override init(
+        contentRect: NSRect,
+        styleMask style: NSWindow.StyleMask,
+        backing backingStoreType: NSWindow.BackingStoreType,
+        defer flag: Bool
+    ) {
+        super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
+        delegate = self
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        userHasResized = true
+    }
 
     override func sendEvent(_ event: NSEvent) {
         guard event.type == .keyDown else {
@@ -488,5 +547,141 @@ private extension NSRect {
         abs(origin.y - other.origin.y) < 1 &&
         abs(size.width - other.size.width) < 1 &&
         abs(size.height - other.size.height) < 1
+    }
+}
+
+/// Transparent overlay that owns the panel's edges + corners: shows the
+/// correct resize cursor on hover and drives the actual resize via setFrame.
+/// Hit-test returns nil for the interior, so toolbar buttons and the markup
+/// canvas underneath still receive their own clicks.
+private final class EdgeResizeAffordance: NSView {
+    private enum Edge {
+        case top, bottom, left, right
+        case topLeft, topRight, bottomLeft, bottomRight
+    }
+
+    private let edgeWidth: CGFloat = 6
+
+    private var activeEdge: Edge?
+    private var dragStartFrame: NSRect = .zero
+    private var dragStartMouse: NSPoint = .zero
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        return edge(at: local) == nil ? nil : self
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        for (edge, rect) in edgeRects() {
+            addCursorRect(rect, cursor: Self.cursor(for: edge))
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let local = convert(event.locationInWindow, from: nil)
+        guard let edge = edge(at: local), let window else {
+            super.mouseDown(with: event)
+            return
+        }
+        activeEdge = edge
+        dragStartFrame = window.frame
+        dragStartMouse = NSEvent.mouseLocation
+        Self.cursor(for: edge).set()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let window, let edge = activeEdge else {
+            super.mouseDragged(with: event)
+            return
+        }
+        let current = NSEvent.mouseLocation
+        let dx = current.x - dragStartMouse.x
+        let dy = current.y - dragStartMouse.y
+        let f = dragStartFrame
+        let minW = window.contentMinSize.width
+        let minH = window.contentMinSize.height
+        var newFrame = f
+
+        switch edge {
+        case .top:
+            newFrame.size.height = max(minH, f.height + dy)
+        case .bottom:
+            let h = max(minH, f.height - dy)
+            newFrame.size.height = h
+            newFrame.origin.y = f.maxY - h
+        case .left:
+            let w = max(minW, f.width - dx)
+            newFrame.size.width = w
+            newFrame.origin.x = f.maxX - w
+        case .right:
+            newFrame.size.width = max(minW, f.width + dx)
+        case .topLeft:
+            let w = max(minW, f.width - dx)
+            newFrame.size.width = w
+            newFrame.origin.x = f.maxX - w
+            newFrame.size.height = max(minH, f.height + dy)
+        case .topRight:
+            newFrame.size.width = max(minW, f.width + dx)
+            newFrame.size.height = max(minH, f.height + dy)
+        case .bottomLeft:
+            let w = max(minW, f.width - dx)
+            newFrame.size.width = w
+            newFrame.origin.x = f.maxX - w
+            let h = max(minH, f.height - dy)
+            newFrame.size.height = h
+            newFrame.origin.y = f.maxY - h
+        case .bottomRight:
+            newFrame.size.width = max(minW, f.width + dx)
+            let h = max(minH, f.height - dy)
+            newFrame.size.height = h
+            newFrame.origin.y = f.maxY - h
+        }
+        window.setFrame(newFrame, display: true)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard activeEdge != nil else {
+            super.mouseUp(with: event)
+            return
+        }
+        activeEdge = nil
+        (window as? PreviewPanel)?.userHasResized = true
+        NSCursor.arrow.set()
+    }
+
+    /// Edge + corner rects in view coordinates. Corners are listed first so
+    /// `edge(at:)` finds them before falling through to the longer edges.
+    private func edgeRects() -> [(Edge, NSRect)] {
+        let r = bounds
+        let w = edgeWidth
+        let c = edgeWidth  // corner size matches edge width
+        return [
+            (.bottomLeft,  NSRect(x: 0,            y: 0,            width: c, height: c)),
+            (.bottomRight, NSRect(x: r.width - c,  y: 0,            width: c, height: c)),
+            (.topLeft,     NSRect(x: 0,            y: r.height - c, width: c, height: c)),
+            (.topRight,    NSRect(x: r.width - c,  y: r.height - c, width: c, height: c)),
+            (.bottom,      NSRect(x: c,            y: 0,            width: max(r.width  - 2 * c, 0), height: w)),
+            (.top,         NSRect(x: c,            y: r.height - w, width: max(r.width  - 2 * c, 0), height: w)),
+            (.left,        NSRect(x: 0,            y: c,            width: w, height: max(r.height - 2 * c, 0))),
+            (.right,       NSRect(x: r.width - w,  y: c,            width: w, height: max(r.height - 2 * c, 0))),
+        ]
+    }
+
+    private func edge(at point: NSPoint) -> Edge? {
+        for (edge, rect) in edgeRects() where rect.contains(point) {
+            return edge
+        }
+        return nil
+    }
+
+    private static func cursor(for edge: Edge) -> NSCursor {
+        switch edge {
+        case .top, .bottom: return .resizeUpDown
+        case .left, .right: return .resizeLeftRight
+        case .topLeft, .topRight, .bottomLeft, .bottomRight: return .crosshair
+        }
     }
 }
