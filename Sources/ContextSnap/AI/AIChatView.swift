@@ -203,9 +203,7 @@ struct AIChatView: View {
         case .assistant:
             HStack(alignment: .top, spacing: 10) {
                 avatar
-                Text(LocalizedStringKey(message.text))
-                    .textSelection(.enabled)
-                    .lineSpacing(3)
+                MarkdownView(source: message.text)
                     .padding(.top, 3)
                 Spacer(minLength: 30)
             }
@@ -307,8 +305,12 @@ final class AIChatWindowController: NSObject, NSWindowDelegate {
     private var cancellables: Set<AnyCancellable> = []
     var onClose: (() -> Void)?
 
-    init(shot: Shot) {
+    init(shot: Shot, seedReply: String? = nil) {
         model = AIChatModel(shot: shot)
+        if let seedReply {
+            model.messages = [ChatMessage(role: .user, text: "解释这张图"),
+                              ChatMessage(role: .assistant, text: seedReply)]
+        }
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 540, height: 600),
             styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],

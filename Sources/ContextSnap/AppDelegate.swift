@@ -95,15 +95,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let env = ProcessInfo.processInfo.environment
         if let path = env["CONTEXTSNAP_DEBUG_CHAT"], let image = NSImage(contentsOfFile: path) {
             let shot = Shot(url: URL(fileURLWithPath: path), image: image)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.openChat(for: shot) }
+            // CONTEXTSNAP_DEBUG_REPLY=<markdown file> seeds a fake reply.
+            let seed = env["CONTEXTSNAP_DEBUG_REPLY"].flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.openChat(for: shot, seedReply: seed) }
         }
         if env["CONTEXTSNAP_DEBUG_SELECT"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.capture() }
         }
     }
 
-    private func openChat(for shot: Shot) {
-        let controller = AIChatWindowController(shot: shot)
+    private func openChat(for shot: Shot, seedReply: String? = nil) {
+        let controller = AIChatWindowController(shot: shot, seedReply: seedReply)
         controller.onClose = { [weak self, weak controller] in
             self?.chatWindows.removeAll { $0 === controller }
         }
