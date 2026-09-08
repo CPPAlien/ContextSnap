@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var overlay: OverlayPanelController!
     private var hotkey: GlobalHotkey?
     private var settingsWindow: NSWindow?
+    private var chatWindows: [AIChatWindowController] = []
     private var captureMenuItem: NSMenuItem!
     private var cancellables: Set<AnyCancellable> = []
     private let settings = SettingsStore.shared
@@ -25,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.setupStatusItem()
         }
         reloadHotkey()
+        debugHooks()
 
         Publishers.CombineLatest(settings.$hotkeyKeyCode, settings.$hotkeyModifiers)
             .dropFirst()
@@ -78,11 +80,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func capture() {
         Task { @MainActor in
-            if let shot = await ScreenCapturer.captureInteractive() {
-                overlay.add(shot)
-                MultiFormatPasteboard.writeToClipboard(shot)
+            guard let capture = await ScreenCapturer.captureInteractive() else { return }
+            overlay.add(capture.shot)
+            MultiFormatPasteboard.writeToClipboard(capture.shot)
+            if capture.action == .askAI {
+                openChat(for: capture.shot)
             }
         }
+    }
+
+    /// CONTEXTSNAP_DEBUG_CHAT=<png> opens the chat window at launch;
+    /// CONTEXTSNAP_DEBUG_SELECT=1 opens the selection overlay at launch.
+    private func debugHooks() {
+        let env = ProcessInfo.processInfo.environment
+        if let path = env["CONTEXTSNAP_DEBUG_CHAT"], let image = NSImage(contentsOfFile: path) {
+            let shot = Shot(url: URL(fileURLWithPath: path), image: image)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.openChat(for: shot) }
+        }
+        if env["CONTEXTSNAP_DEBUG_SELECT"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.capture() }
+        }
+    }
+
+    private func openChat(for shot: Shot) {
+        let controller = AIChatWindowController(shot: shot)
+        controller.onClose = { [weak self, weak controller] in
+            self?.chatWindows.removeAll { $0 === controller }
+        }
+        chatWindows.append(controller)
+        controller.show()
     }
 
     @objc func clearStack() {
@@ -147,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showSettings() {
         if settingsWindow == nil {
             let w = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 480, height: 330),
+                contentRect: NSRect(x: 0, y: 0, width: 480, height: 420),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false

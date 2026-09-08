@@ -98,6 +98,17 @@ struct SettingsView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 6) {
+                Text("Ask AI command").font(.headline)
+                TextField("claude", text: $store.claudeCommand)
+                    .font(.system(.body, design: .monospaced))
+                    .textFieldStyle(.roundedBorder)
+                Text("Runs `<command> -p` in a login shell with the screenshot path. Change it if `claude` lives somewhere your shell profile doesn't add to PATH.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Save location").font(.headline)
                 HStack {
                     Text(store.saveDirectory.path)

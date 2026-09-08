@@ -11,6 +11,7 @@ final class SettingsStore: ObservableObject {
         static let modifiers = "hotkey.modifiers"
         static let saveDirectory = "saveDirectory"
         static let persistentIcon = "persistentIcon"
+        static let claudeCommand = "claudeCommand"
     }
 
     @Published var hotkeyKeyCode: UInt32 {
@@ -24,6 +25,11 @@ final class SettingsStore: ObservableObject {
     }
     @Published var persistentIcon: Bool {
         didSet { UserDefaults.standard.set(persistentIcon, forKey: Key.persistentIcon) }
+    }
+    /// Command used for "Ask AI". Run through a login shell so PATH entries
+    /// from nvm / Homebrew resolve even though the app is launched by launchd.
+    @Published var claudeCommand: String {
+        didSet { UserDefaults.standard.set(claudeCommand, forKey: Key.claudeCommand) }
     }
     @Published private(set) var launchAtLogin: Bool
     @Published var launchAtLoginError: String?
@@ -47,6 +53,8 @@ final class SettingsStore: ObservableObject {
             self.saveDirectory = base.appendingPathComponent("ContextSnap")
         }
         self.persistentIcon = d.object(forKey: Key.persistentIcon) as? Bool ?? false
+        let cmd = d.string(forKey: Key.claudeCommand) ?? ""
+        self.claudeCommand = cmd.isEmpty ? "claude" : cmd
         if #available(macOS 13.0, *) {
             self.launchAtLogin = SMAppService.mainApp.status == .enabled
         } else {

@@ -18,10 +18,16 @@ struct Shot: Identifiable, Equatable {
     }
 }
 
+struct InteractiveCapture {
+    let shot: Shot
+    let action: SelectionAction
+}
+
 @MainActor
 enum ScreenCapturer {
-    static func captureInteractive() async -> Shot? {
-        guard let cocoaRect = await SelectionOverlay.selectRect() else { return nil }
+    static func captureInteractive() async -> InteractiveCapture? {
+        guard let selection = await SelectionOverlay.select() else { return nil }
+        let cocoaRect = selection.rect
         // Give the overlay one runloop tick to fully order out before we
         // ask the WindowServer for a screenshot — otherwise the dim layer
         // can sneak into the capture on slower machines.
@@ -34,7 +40,7 @@ enum ScreenCapturer {
         let bitmap = NSBitmapImageRep(cgImage: cgImage)
         guard let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
         try? png.write(to: url)
-        return Shot(url: url, image: nsImage)
+        return InteractiveCapture(shot: Shot(url: url, image: nsImage), action: selection.action)
     }
 
     /// Captures a global Cocoa rect using ScreenCaptureKit. CGWindowListCreateImage
