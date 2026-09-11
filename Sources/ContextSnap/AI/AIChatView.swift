@@ -17,11 +17,21 @@ final class AIChatModel: ObservableObject {
     @Published var busy = false
     /// Keeps the window above every other app's windows and on all Spaces.
     @Published var pinned = true
+    /// Which CLI agent answers. Switching starts a fresh agent session; the
+    /// transcript above stays so the user keeps the history on screen.
+    @Published var backend: AIBackend {
+        didSet {
+            guard backend != oldValue else { return }
+            sessionID = nil
+            SettingsStore.shared.aiBackend = backend
+        }
+    }
 
     private var sessionID: String?
 
-    init(shot: Shot) {
+    init(shot: Shot, backend: AIBackend = SettingsStore.shared.aiBackend) {
         self.shot = shot
+        self.backend = backend
     }
 
     var canSend: Bool {
@@ -35,15 +45,25 @@ final class AIChatModel: ObservableObject {
         messages.append(ChatMessage(role: .user, text: question))
         busy = true
 
+        let backend = backend
         let prompt = buildPrompt(question)
         let session = sessionID
         let dir = shot.url.deletingLastPathComponent()
-        let command = SettingsStore.shared.claudeCommand
+        let command = SettingsStore.shared.command(for: backend)
+        let imagePath = shot.url.path
 
         Task { [weak self] in
             do {
-                let reply = try await ClaudeCLI.ask(prompt: prompt, sessionID: session,
+                let reply: AIReply
+                switch backend {
+                case .claude:
+                    reply = try await ClaudeCLI.ask(prompt: prompt, sessionID: session,
                                                     workingDirectory: dir, command: command)
+                case .codex:
+                    reply = try await CodexCLI.ask(prompt: prompt, imagePath: imagePath,
+                                                   sessionID: session, workingDirectory: dir,
+                                                   command: command)
+                }
                 guard let self else { return }
                 if let id = reply.sessionID { self.sessionID = id }
                 self.messages.append(ChatMessage(role: .assistant, text: reply.text))
@@ -54,13 +74,53 @@ final class AIChatModel: ObservableObject {
         }
     }
 
-    /// The first turn tells Claude where the screenshot lives; later turns
-    /// ride on the resumed session, which already has the image in context.
+    /// The whole conversation as Markdown, ready to drop into notes or a PR.
+    func transcriptMarkdown() -> String {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        var out = "# \(backend.askTitle) — \(shot.url.lastPathComponent)\n\n"
+        out += "- Screenshot: `\(shot.url.path)`\n- Exported: \(stamp)\n\n---\n\n"
+        for message in messages {
+            switch message.role {
+            case .user: out += "## You\n\n\(message.text)\n\n"
+            case .assistant: out += "## \(backend.displayName)\n\n\(message.text)\n\n"
+            case .error: out += "## Error\n\n> \(message.text)\n\n"
+            }
+        }
+        return out
+    }
+
+    /// Writes the transcript wherever the user points the save panel.
+    func exportTranscript() {
+        guard !messages.isEmpty else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "md") ?? .plainText]
+        panel.nameFieldStringValue = Self.defaultExportName(for: shot)
+        panel.canCreateDirectories = true
+        panel.title = "Save chat transcript"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try transcriptMarkdown().write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            messages.append(ChatMessage(role: .error, text: "Couldn't save transcript: \(error.localizedDescription)"))
+        }
+    }
+
+    private static func defaultExportName(for shot: Shot) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        return "ContextSnap-Chat-\(formatter.string(from: Date())).md"
+    }
+
+    /// The first turn hands the agent the screenshot — Claude reads it from
+    /// disk, Codex gets it attached via `--image`. Later turns ride on the
+    /// resumed session, which already has the image in context.
     private func buildPrompt(_ question: String) -> String {
         guard sessionID == nil else { return question }
+        let preamble = backend == .claude
+            ? "Use the Read tool to view the screenshot at \(shot.url.path), then answer the user's question about it."
+            : "The attached image is a screenshot. Answer the user's question about it."
         return """
-        Use the Read tool to view the screenshot at \(shot.url.path), then answer the user's question about it. \
-        Reply in the same language the user writes in. Be concise.
+        \(preamble) Reply in the same language the user writes in. Be concise.
 
         User's question: \(question)
         """
@@ -72,6 +132,9 @@ private let accent = Color(red: 0.55, green: 0.36, blue: 0.96)
 struct AIChatView: View {
     @ObservedObject var model: AIChatModel
     @FocusState private var inputFocused: Bool
+    @ObservedObject private var availability = AIBackendAvailability.shared
+    @State private var hoveredMessageID: ChatMessage.ID?
+    @State private var copiedMessageID: ChatMessage.ID?
 
     private let suggestions = ["解释这张图", "翻译成中文", "总结要点", "这个报错怎么修？"]
 
@@ -83,7 +146,20 @@ struct AIChatView: View {
         }
         .frame(minWidth: 460, minHeight: 480)
         .background(.regularMaterial)
-        .onAppear { inputFocused = true }
+        .onAppear {
+            inputFocused = true
+            availability.refresh()
+        }
+        // The composer stays editable while Claude answers, so the caret
+        // never has to be clicked back into place mid-reply.
+        .onChange(of: model.busy) { _ in inputFocused = true }
+    }
+
+    /// The one other installed agent, when there is exactly one to offer.
+    /// With only Claude around the header stays as it was.
+    private var otherBackend: AIBackend? {
+        let others = AIBackend.allCases.filter { $0 != model.backend && availability.installed.contains($0) }
+        return others.count == 1 ? others.first : nil
     }
 
     // MARK: Header
@@ -99,9 +175,22 @@ struct AIChatView: View {
                     .stroke(Color.primary.opacity(0.12)))
                 .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Image(systemName: "sparkles").foregroundStyle(accent)
-                    Text("Ask Claude").font(.title3.weight(.semibold))
+                    Text(model.backend.askTitle).font(.title3.weight(.semibold))
+                    if let other = otherBackend {
+                        Button {
+                            model.backend = other
+                        } label: {
+                            Text("Switch to \(other.displayName)")
+                                .font(.caption.weight(.medium))
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(Capsule().fill(Color.primary.opacity(0.07)))
+                                .overlay(Capsule().stroke(Color.primary.opacity(0.12)))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Answer with \(other.displayName) from here on — the transcript stays, the agent session restarts")
+                    }
                 }
                 Text("\(Int(model.shot.image.size.width)) × \(Int(model.shot.image.size.height))  ·  \(model.shot.url.lastPathComponent)")
                     .font(.caption)
@@ -110,6 +199,18 @@ struct AIChatView: View {
                     .truncationMode(.middle)
             }
             Spacer()
+            Button {
+                model.exportTranscript()
+            } label: {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(model.messages.isEmpty ? Color.secondary.opacity(0.5) : Color.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(Color.primary.opacity(0.06), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(model.messages.isEmpty)
+            .help("Save this conversation as a Markdown file")
             Button {
                 model.pinned.toggle()
             } label: {
@@ -188,6 +289,28 @@ struct AIChatView: View {
         .frame(width: 26, height: 26)
     }
 
+    /// Copies one reply's raw Markdown; the icon flips to a checkmark for a
+    /// beat so the click has visible feedback.
+    private func copyButton(for message: ChatMessage) -> some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(message.text, forType: .string)
+            copiedMessageID = message.id
+            let id = message.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if copiedMessageID == id { copiedMessageID = nil }
+            }
+        } label: {
+            Image(systemName: copiedMessageID == message.id ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(copiedMessageID == message.id ? accent : Color.secondary)
+                .frame(width: 24, height: 24)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("Copy this reply")
+    }
+
     @ViewBuilder
     private func bubble(_ message: ChatMessage) -> some View {
         switch message.role {
@@ -206,6 +329,18 @@ struct AIChatView: View {
                 MarkdownView(source: message.text)
                     .padding(.top, 3)
                 Spacer(minLength: 30)
+                copyButton(for: message)
+                    .opacity(hoveredMessageID == message.id || copiedMessageID == message.id ? 1 : 0)
+            }
+            // Without an explicit shape the row only hit-tests where there is
+            // content, so crossing the gap toward the button counts as "left".
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside {
+                    hoveredMessageID = message.id
+                } else if hoveredMessageID == message.id {
+                    hoveredMessageID = nil
+                }
             }
         case .error:
             HStack(alignment: .top, spacing: 10) {
@@ -233,7 +368,6 @@ struct AIChatView: View {
                     .stroke(inputFocused ? accent.opacity(0.7) : Color.primary.opacity(0.12), lineWidth: 1))
                 .focused($inputFocused)
                 .onSubmit { model.send() }
-                .disabled(model.busy)
             Button { model.send() } label: {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 14, weight: .bold))

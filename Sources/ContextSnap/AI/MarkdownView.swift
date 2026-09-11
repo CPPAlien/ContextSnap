@@ -228,10 +228,13 @@ private struct InlineText: View {
     }
 
     private var attributed: AttributedString {
+        // LaTeX first: "$v_i$" would otherwise reach the Markdown parser as
+        // an underscore emphasis and lose the subscript entirely.
+        let source = MathText.render(text)
         var opts = AttributedString.MarkdownParsingOptions()
         opts.interpretedSyntax = .inlineOnlyPreservingWhitespace
-        guard var attr = try? AttributedString(markdown: text, options: opts) else {
-            return AttributedString(text)
+        guard var attr = try? AttributedString(markdown: source, options: opts) else {
+            return AttributedString(source)
         }
         // Style inline code spans (system parser tags them but doesn't style).
         for run in attr.runs where run.inlinePresentationIntent?.contains(.code) == true {

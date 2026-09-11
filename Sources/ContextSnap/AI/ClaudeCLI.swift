@@ -5,15 +5,8 @@ import Foundation
 /// Each call is one turn. The first turn returns a session id which is fed
 /// back via `--resume` so follow-up questions keep the screenshot context.
 enum ClaudeCLI {
-    struct Reply {
-        let text: String
-        let sessionID: String?
-    }
-
-    struct Failure: LocalizedError {
-        let message: String
-        var errorDescription: String? { message }
-    }
+    typealias Reply = AIReply
+    typealias Failure = AIFailure
 
     static func ask(prompt: String,
                     sessionID: String?,
@@ -64,7 +57,7 @@ enum ClaudeCLI {
         let stderr = String(decoding: errData, as: UTF8.self)
 
         if process.terminationStatus == 127 {
-            throw Failure(message: "`\(command)` not found. Install Claude Code or set the command in Settings.")
+            throw Failure(message: "`\(command)` not found. \(AIBackend.claude.installHint)")
         }
 
         if let parsed = parse(stdout) {

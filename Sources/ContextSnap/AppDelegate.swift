@@ -26,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.setupStatusItem()
         }
         reloadHotkey()
+        // Probe for installed agent CLIs now so the first chat window already
+        // knows whether it can offer the Codex switch.
+        AIBackendAvailability.shared.refresh()
         debugHooks()
 
         Publishers.CombineLatest(settings.$hotkeyKeyCode, settings.$hotkeyModifiers)

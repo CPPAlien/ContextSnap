@@ -12,6 +12,8 @@ final class SettingsStore: ObservableObject {
         static let saveDirectory = "saveDirectory"
         static let persistentIcon = "persistentIcon"
         static let claudeCommand = "claudeCommand"
+        static let codexCommand = "codexCommand"
+        static let aiBackend = "aiBackend"
     }
 
     @Published var hotkeyKeyCode: UInt32 {
@@ -30,6 +32,15 @@ final class SettingsStore: ObservableObject {
     /// from nvm / Homebrew resolve even though the app is launched by launchd.
     @Published var claudeCommand: String {
         didSet { UserDefaults.standard.set(claudeCommand, forKey: Key.claudeCommand) }
+    }
+    /// Command used for "Ask Codex", same login-shell resolution as above.
+    @Published var codexCommand: String {
+        didSet { UserDefaults.standard.set(codexCommand, forKey: Key.codexCommand) }
+    }
+    /// Agent the next chat window opens with; follows whatever the user last
+    /// switched to inside a chat.
+    @Published var aiBackend: AIBackend {
+        didSet { UserDefaults.standard.set(aiBackend.rawValue, forKey: Key.aiBackend) }
     }
     @Published private(set) var launchAtLogin: Bool
     @Published var launchAtLoginError: String?
@@ -55,10 +66,20 @@ final class SettingsStore: ObservableObject {
         self.persistentIcon = d.object(forKey: Key.persistentIcon) as? Bool ?? false
         let cmd = d.string(forKey: Key.claudeCommand) ?? ""
         self.claudeCommand = cmd.isEmpty ? "claude" : cmd
+        let codex = d.string(forKey: Key.codexCommand) ?? ""
+        self.codexCommand = codex.isEmpty ? AIBackend.codex.defaultCommand : codex
+        self.aiBackend = d.string(forKey: Key.aiBackend).flatMap(AIBackend.init(rawValue:)) ?? .claude
         if #available(macOS 13.0, *) {
             self.launchAtLogin = SMAppService.mainApp.status == .enabled
         } else {
             self.launchAtLogin = false
+        }
+    }
+
+    func command(for backend: AIBackend) -> String {
+        switch backend {
+        case .claude: return claudeCommand
+        case .codex: return codexCommand
         }
     }
 

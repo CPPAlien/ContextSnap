@@ -98,11 +98,27 @@ struct SettingsView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Ask AI command").font(.headline)
-                TextField("claude", text: $store.claudeCommand)
-                    .font(.system(.body, design: .monospaced))
-                    .textFieldStyle(.roundedBorder)
-                Text("Runs `<command> -p` in a login shell with the screenshot path. Change it if `claude` lives somewhere your shell profile doesn't add to PATH.")
+                Text("Ask AI commands").font(.headline)
+                HStack {
+                    Text("Claude").frame(width: 54, alignment: .leading)
+                    TextField("claude", text: $store.claudeCommand)
+                        .font(.system(.body, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                }
+                HStack {
+                    Text("Codex").frame(width: 54, alignment: .leading)
+                    TextField("codex", text: $store.codexCommand)
+                        .font(.system(.body, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                }
+                Picker("Default agent", selection: $store.aiBackend) {
+                    ForEach(AIBackend.allCases) { backend in
+                        Text(backend.displayName).tag(backend)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                Text("Each runs in a login shell with the screenshot attached. Change a command if the CLI lives somewhere your shell profile doesn't add to PATH; a chat window only offers the agents actually installed.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
