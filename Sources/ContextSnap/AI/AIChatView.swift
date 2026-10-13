@@ -17,17 +17,20 @@ final class AIChatModel: ObservableObject {
     @Published var busy = false
     /// Keeps the window above every other app's windows and on all Spaces.
     @Published var pinned = true
-    /// Which CLI agent answers. Switching starts a fresh agent session; the
+    /// Which CLI agent answers. Each agent keeps its own session, so switching
+    /// back and forth resumes the thread that agent already had; the
     /// transcript above stays so the user keeps the history on screen.
     @Published var backend: AIBackend {
         didSet {
             guard backend != oldValue else { return }
-            sessionID = nil
             SettingsStore.shared.aiBackend = backend
         }
     }
 
-    private var sessionID: String?
+    /// Session handles are per backend: a Claude session id is meaningless to
+    /// Codex and vice versa, and an in-flight turn must never park its id on
+    /// whichever backend happens to be selected when it finishes.
+    private var sessionIDs: [AIBackend: String] = [:]
 
     init(shot: Shot, backend: AIBackend = SettingsStore.shared.aiBackend) {
         self.shot = shot
@@ -46,32 +49,68 @@ final class AIChatModel: ObservableObject {
         busy = true
 
         let backend = backend
-        let prompt = buildPrompt(question)
-        let session = sessionID
+        let session = sessionIDs[backend]
+        let prompt = buildPrompt(question, backend: backend, resuming: session != nil)
         let dir = shot.url.deletingLastPathComponent()
         let command = SettingsStore.shared.command(for: backend)
         let imagePath = shot.url.path
 
         Task { [weak self] in
             do {
-                let reply: AIReply
-                switch backend {
-                case .claude:
-                    reply = try await ClaudeCLI.ask(prompt: prompt, sessionID: session,
-                                                    workingDirectory: dir, command: command)
-                case .codex:
-                    reply = try await CodexCLI.ask(prompt: prompt, imagePath: imagePath,
-                                                   sessionID: session, workingDirectory: dir,
-                                                   command: command)
+                var reply: AIReply
+                do {
+                    reply = try await Self.runTurn(backend: backend, prompt: prompt,
+                                                   sessionID: session, imagePath: imagePath,
+                                                   workingDirectory: dir, command: command)
+                } catch where session != nil && Self.isUnknownSession(error) {
+                    // The agent no longer knows this thread (expired, pruned,
+                    // or a different CLI wrote its history). Start a fresh
+                    // session instead of wedging the chat on a dead id.
+                    self?.sessionIDs[backend] = nil
+                    let fresh = self?.buildPrompt(question, backend: backend, resuming: false)
+                    reply = try await Self.runTurn(backend: backend, prompt: fresh ?? question,
+                                                   sessionID: nil, imagePath: imagePath,
+                                                   workingDirectory: dir, command: command)
                 }
                 guard let self else { return }
-                if let id = reply.sessionID { self.sessionID = id }
+                if let id = reply.sessionID { self.sessionIDs[backend] = id }
                 self.messages.append(ChatMessage(role: .assistant, text: reply.text))
             } catch {
                 self?.messages.append(ChatMessage(role: .error, text: error.localizedDescription))
             }
             self?.busy = false
         }
+    }
+
+    private nonisolated static func runTurn(backend: AIBackend,
+                                            prompt: String,
+                                            sessionID: String?,
+                                            imagePath: String,
+                                            workingDirectory: URL,
+                                            command: String) async throws -> AIReply {
+        switch backend {
+        case .claude:
+            return try await ClaudeCLI.ask(prompt: prompt, sessionID: sessionID,
+                                           workingDirectory: workingDirectory, command: command)
+        case .codex:
+            return try await CodexCLI.ask(prompt: prompt, imagePath: imagePath,
+                                          sessionID: sessionID, workingDirectory: workingDirectory,
+                                          command: command)
+        }
+    }
+
+    /// Both CLIs report an unusable session id as plain prose, so the message
+    /// is all there is to go on: `claude --resume` prints "No conversation
+    /// found with session ID: …" and `codex exec resume` prints variations on
+    /// "thread not found".
+    nonisolated static func isUnknownSession(_ error: Error) -> Bool {
+        let message = error.localizedDescription.lowercased()
+        let mentionsSession = message.contains("session") || message.contains("thread")
+                              || message.contains("conversation")
+        let mentionsMissing = message.contains("no conversation found")
+            || message.contains("not found") || message.contains("does not exist")
+            || message.contains("unknown") || message.contains("invalid")
+        return mentionsSession && mentionsMissing
     }
 
     /// The whole conversation as Markdown, ready to drop into notes or a PR.
@@ -114,8 +153,8 @@ final class AIChatModel: ObservableObject {
     /// The first turn hands the agent the screenshot — Claude reads it from
     /// disk, Codex gets it attached via `--image`. Later turns ride on the
     /// resumed session, which already has the image in context.
-    private func buildPrompt(_ question: String) -> String {
-        guard sessionID == nil else { return question }
+    private func buildPrompt(_ question: String, backend: AIBackend, resuming: Bool) -> String {
+        guard !resuming else { return question }
         let preamble = backend == .claude
             ? "Use the Read tool to view the screenshot at \(shot.url.path), then answer the user's question about it."
             : "The attached image is a screenshot. Answer the user's question about it."
@@ -189,7 +228,7 @@ struct AIChatView: View {
                                 .overlay(Capsule().stroke(Color.primary.opacity(0.12)))
                         }
                         .buttonStyle(.plain)
-                        .help("Answer with \(other.displayName) from here on — the transcript stays, the agent session restarts")
+                        .help("Answer with \(other.displayName) from here on — the transcript stays, and each agent keeps its own session")
                     }
                 }
                 Text("\(Int(model.shot.image.size.width)) × \(Int(model.shot.image.size.height))  ·  \(model.shot.url.lastPathComponent)")

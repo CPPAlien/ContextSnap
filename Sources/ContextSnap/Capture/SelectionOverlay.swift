@@ -11,16 +11,22 @@ enum SelectionAction {
 struct SelectionResult {
     let rect: NSRect
     let action: SelectionAction
+    let image: NSImage
+    let annotations: [Annotation]
 }
 
 @MainActor
 final class SelectionOverlay {
     private static var active: SelectionOverlay?
+    private static var isSelecting = false
 
     static func select() async -> SelectionResult? {
-        if active != nil { return nil }
+        guard !isSelecting, let screen = NSScreen.screenContainingMouse() ?? NSScreen.main else { return nil }
+        isSelecting = true
+        defer { isSelecting = false }
+        guard let snapshot = await ScreenCapturer.capture(cocoaRect: screen.frame) else { return nil }
         return await withCheckedContinuation { cont in
-            let overlay = SelectionOverlay(continuation: cont)
+            let overlay = SelectionOverlay(continuation: cont, screen: screen, snapshot: snapshot)
             active = overlay
             overlay.present()
         }
@@ -29,26 +35,32 @@ final class SelectionOverlay {
     private let window: NSWindow
     private let view: SelectionView
     private let screen: NSScreen
+    private let snapshot: CGImage
     private var continuation: CheckedContinuation<SelectionResult?, Never>?
     private var localEscapeMonitor: Any?
     private var globalEscapeMonitor: Any?
 
-    private init(continuation: CheckedContinuation<SelectionResult?, Never>) {
+    private init(continuation: CheckedContinuation<SelectionResult?, Never>, screen: NSScreen, snapshot: CGImage) {
         self.continuation = continuation
-        self.screen = NSScreen.screenContainingMouse() ?? NSScreen.main!
+        self.screen = screen
+        self.snapshot = snapshot
         window = KeyableOverlayWindow(contentRect: screen.frame,
                                       styleMask: [.nonactivatingPanel, .borderless],
                                       backing: .buffered,
                                       defer: false,
                                       screen: screen)
         window.level = .screenSaver
-        window.backgroundColor = .clear
-        window.isOpaque = false
+        // The frozen desktop fills the entire window; keep it opaque so the
+        // live desktop cannot flash through during presentation.
+        window.backgroundColor = .black
+        window.isOpaque = true
+        window.animationBehavior = .none
+        window.hidesOnDeactivate = false
         window.hasShadow = false
         window.ignoresMouseEvents = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
-        view = SelectionView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        view = SelectionView(frame: NSRect(origin: .zero, size: screen.frame.size), snapshot: NSImage(cgImage: snapshot, size: screen.frame.size))
         window.contentView = view
     }
 
@@ -60,7 +72,9 @@ final class SelectionOverlay {
         // Don't NSApp.activate — that yanks the user out of any active
         // fullscreen Space. The nonactivating panel can still receive
         // mouse + key events without us becoming frontmost.
-        window.setFrame(screen.frame, display: true)
+        window.setFrame(screen.frame, display: false, animate: false)
+        window.contentView?.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
         window.orderFrontRegardless()
         window.makeKey()
         window.makeFirstResponder(view)
@@ -77,11 +91,11 @@ final class SelectionOverlay {
         window.close()
 
         let result: SelectionResult?
-        if let r = rect {
+        if let r = rect, let cropped = snapshot.cropping(to: SelectionGeometry.pixelRect(for: r, screenSize: screen.frame.size, pixelSize: CGSize(width: snapshot.width, height: snapshot.height))) {
             let global = NSRect(x: screen.frame.origin.x + r.origin.x,
                                 y: screen.frame.origin.y + r.origin.y,
                                 width: r.width, height: r.height)
-            result = SelectionResult(rect: global, action: action)
+            result = SelectionResult(rect: global, action: action, image: NSImage(cgImage: cropped, size: r.size), annotations: view.annotations)
         } else {
             result = nil
         }
@@ -126,6 +140,12 @@ private extension NSScreen {
 }
 
 private final class KeyableOverlayWindow: NSPanel {
+    // A screen-sized snapshot must also cover the menu bar and Dock. AppKit's
+    // normal window constraints can move it, making the desktop appear to jump.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+
     // Borderless / nonactivating panels return false from canBecomeKey
     // by default, which prevents keyDown events (incl. Esc) from reaching
     // the view. Force it on so Esc still cancels the selection.
@@ -133,7 +153,22 @@ private final class KeyableOverlayWindow: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-private final class SelectionView: NSView {
+/// Selection uses bottom-left screen coordinates; annotations use top-left image coordinates.
+enum SelectionGeometry {
+    static func pixelRect(for rect: CGRect, screenSize: CGSize, pixelSize: CGSize) -> CGRect {
+        let scaleX = pixelSize.width / screenSize.width
+        let scaleY = pixelSize.height / screenSize.height
+        return CGRect(x: rect.minX * scaleX, y: (screenSize.height - rect.maxY) * scaleY,
+                      width: rect.width * scaleX, height: rect.height * scaleY).integral
+    }
+
+    static func annotationPoint(_ point: CGPoint, in rect: CGRect) -> CGPoint {
+        CGPoint(x: min(max(point.x - rect.minX, 0), rect.width),
+                y: min(max(rect.maxY - point.y, 0), rect.height))
+    }
+}
+
+final class SelectionView: NSView {
     var onComplete: ((NSRect?, SelectionAction) -> Void)?
 
     private enum Phase {
@@ -152,16 +187,29 @@ private final class SelectionView: NSView {
     private var moveOrigin: NSPoint?
 
     private let toolbar = SelectionToolbar()
+    private let snapshot: NSImage
+    private(set) var annotations: [Annotation] = []
+    private var undoneAnnotations: [Annotation] = []
+    private var activeTool: AnnotationTool?
+    private var draftAnnotation: Annotation?
+    private var textEditor: NSTextField?
+    private var textOrigin: CGPoint?
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { false }
 
-    override init(frame: NSRect) {
+    init(frame: NSRect, snapshot: NSImage) {
+        self.snapshot = snapshot
         super.init(frame: frame)
         toolbar.isHidden = true
         toolbar.onCancel = { [weak self] in self?.onComplete?(nil, .capture) }
         toolbar.onConfirm = { [weak self] in self?.confirm(.capture) }
         toolbar.onAskAI = { [weak self] in self?.confirm(.askAI) }
+        toolbar.onToolSelected = { [weak self] tool in
+            self?.selectTool(tool)
+        }
+        toolbar.onUndo = { [weak self] in self?.undoAnnotation() }
+        toolbar.onRedo = { [weak self] in self?.redoAnnotation() }
         addSubview(toolbar)
     }
 
@@ -169,17 +217,36 @@ private final class SelectionView: NSView {
 
     private func confirm(_ action: SelectionAction) {
         guard phase == .pending, !pendingRect.isEmpty else { return }
+        commitText()
         onComplete?(pendingRect, action)
     }
 
     override func mouseDown(with event: NSEvent) {
-        let p = event.locationInWindow
+        let p = convert(event.locationInWindow, from: nil)
+        commitText()
+        window?.makeFirstResponder(self)
+        if phase == .pending, pendingRect.contains(p), let tool = activeTool {
+            let point = SelectionGeometry.annotationPoint(p, in: pendingRect)
+            if tool == .text {
+                beginText(at: point)
+            } else {
+                draftAnnotation = Annotation(tool: tool, points: [point, point],
+                                             lineWidth: AnnotationStyle.lineWidth(for: pendingRect.size))
+            }
+            needsDisplay = true
+            return
+        }
         if phase == .pending, pendingRect.contains(p) {
             moveAnchor = p
             moveOrigin = pendingRect.origin
             return
         }
         phase = .drawing
+        annotations.removeAll()
+        undoneAnnotations.removeAll()
+        draftAnnotation = nil
+        activeTool = nil
+        toolbar.selectTool(nil)
         toolbar.isHidden = true
         pendingRect = .zero
         startPoint = p
@@ -188,7 +255,16 @@ private final class SelectionView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        let p = event.locationInWindow
+        let p = convert(event.locationInWindow, from: nil)
+        if var draft = draftAnnotation {
+            let point = SelectionGeometry.annotationPoint(p, in: pendingRect)
+            if draft.tool == .arrow { draft.points = [draft.points[0], point] }
+            else { draft.points.append(point) }
+            draftAnnotation = draft
+            needsDisplay = true
+            return
+        }
+        if textEditor != nil { return }
         if let anchor = moveAnchor, let origin = moveOrigin {
             var r = pendingRect
             r.origin = NSPoint(x: origin.x + (p.x - anchor.x), y: origin.y + (p.y - anchor.y))
@@ -200,16 +276,34 @@ private final class SelectionView: NSView {
             needsDisplay = true
             return
         }
-        currentPoint = p
+        currentPoint = CGPoint(x: min(max(p.x, bounds.minX), bounds.maxX),
+                               y: min(max(p.y, bounds.minY), bounds.maxY))
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
+        if var draft = draftAnnotation {
+            let point = SelectionGeometry.annotationPoint(convert(event.locationInWindow, from: nil), in: pendingRect)
+            if draft.tool == .arrow { draft.points = [draft.points[0], point] }
+            else if draft.points.last != point { draft.points.append(point) }
+            if let start = draft.points.first, let end = draft.points.last,
+               draft.tool == .pen || hypot(end.x - start.x, end.y - start.y) > 1 {
+                annotations.append(draft)
+                undoneAnnotations.removeAll()
+            }
+            draftAnnotation = nil
+            needsDisplay = true
+            return
+        }
+        if phase == .pending, activeTool != nil { return }
         if moveAnchor != nil {
             moveAnchor = nil
             moveOrigin = nil
             return
         }
+        let releasedPoint = convert(event.locationInWindow, from: nil)
+        currentPoint = CGPoint(x: min(max(releasedPoint.x, bounds.minX), bounds.maxX),
+                               y: min(max(releasedPoint.y, bounds.minY), bounds.maxY))
         let rect = currentSelection
         startPoint = nil
         currentPoint = nil
@@ -227,7 +321,31 @@ private final class SelectionView: NSView {
         needsDisplay = true
     }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if textEditor == nil, handleHistoryShortcut(event) { return true }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    private func handleHistoryShortcut(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.contains(.command),
+              !event.modifierFlags.contains(.option), !event.modifierFlags.contains(.control),
+              event.charactersIgnoringModifiers?.lowercased() == "z" else { return false }
+        if event.modifierFlags.contains(.shift) { redoAnnotation() }
+        else { undoAnnotation() }
+        return true
+    }
+
     override func keyDown(with event: NSEvent) {
+        if handleHistoryShortcut(event) { return }
+        if phase == .pending, event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "v": selectTool(nil); return
+            case "p": selectTool(.pen); return
+            case "a": selectTool(.arrow); return
+            case "t": selectTool(.text); return
+            default: break
+            }
+        }
         switch event.keyCode {
         case 53: // Escape
             onComplete?(nil, .capture)
@@ -236,6 +354,75 @@ private final class SelectionView: NSView {
         default:
             super.keyDown(with: event)
         }
+    }
+
+    private func selectTool(_ tool: AnnotationTool?) {
+        commitText()
+        activeTool = tool
+        toolbar.selectTool(tool)
+        window?.makeFirstResponder(self)
+        (tool == nil ? NSCursor.openHand : NSCursor.crosshair).set()
+    }
+
+    private func beginText(at point: CGPoint) {
+        let fontSize = AnnotationStyle.textFontSize(for: pendingRect.size)
+        let size = CGSize(width: min(240, pendingRect.width), height: min(fontSize + 10, pendingRect.height))
+        // Keep the editor and the exported text anchor together at the edges.
+        let origin = CGPoint(x: min(point.x, pendingRect.width - min(40, size.width)),
+                             y: min(point.y, pendingRect.height - size.height))
+        let editor = NSTextField(frame: NSRect(
+            x: pendingRect.minX + origin.x,
+            y: pendingRect.maxY - origin.y - size.height,
+            width: min(size.width, pendingRect.width - origin.x), height: size.height))
+        editor.font = .systemFont(ofSize: fontSize, weight: .bold)
+        editor.textColor = .systemRed
+        editor.backgroundColor = NSColor.white.withAlphaComponent(0.9)
+        editor.focusRingType = .none
+        editor.placeholderString = "文字"
+        editor.target = self
+        editor.action = #selector(finishText)
+        textEditor = editor
+        textOrigin = origin
+        addSubview(editor)
+        window?.makeFirstResponder(editor)
+    }
+
+    @objc private func finishText() {
+        commitText()
+        window?.makeFirstResponder(self)
+    }
+
+    private func commitText() {
+        guard let editor = textEditor, let point = textOrigin else { return }
+        textEditor = nil
+        textOrigin = nil
+        // End the field editor before reading so the final IME composition is included.
+        window?.makeFirstResponder(self)
+        let text = editor.stringValue
+        editor.removeFromSuperview()
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            annotations.append(Annotation(tool: .text, points: [point], text: text,
+                                          fontSize: AnnotationStyle.textFontSize(for: pendingRect.size)))
+            undoneAnnotations.removeAll()
+        }
+        needsDisplay = true
+    }
+
+    @objc func undo(_ sender: Any?) { undoAnnotation() }
+    @objc func redo(_ sender: Any?) { redoAnnotation() }
+
+    private func undoAnnotation() {
+        commitText()
+        draftAnnotation = nil
+        if let annotation = annotations.popLast() { undoneAnnotations.append(annotation) }
+        needsDisplay = true
+    }
+
+    private func redoAnnotation() {
+        commitText()
+        draftAnnotation = nil
+        if let annotation = undoneAnnotations.popLast() { annotations.append(annotation) }
+        needsDisplay = true
     }
 
     /// Places the ✕ / AI / ✓ pill just below the selection, right-aligned,
@@ -264,6 +451,16 @@ private final class SelectionView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let sel = currentSelection
+        snapshot.draw(in: bounds)
+        if !sel.isEmpty, let context = NSGraphicsContext.current?.cgContext {
+            context.saveGState()
+            context.clip(to: sel)
+            context.translateBy(x: sel.minX, y: sel.minY)
+            for annotation in annotations + (draftAnnotation.map { [$0] } ?? []) {
+                annotation.drawInPixelContext(context, logicalSize: sel.size, pixelSize: sel.size)
+            }
+            context.restoreGState()
+        }
 
         // Dim everything except the selection (even-odd cut-out).
         let mask = NSBezierPath(rect: bounds)
@@ -322,8 +519,13 @@ private final class SelectionView: NSView {
         var labelOrigin = NSPoint(x: sel.maxX - labelSize.width - pad,
                                   y: sel.minY - labelSize.height - 2 * pad - 4)
         if phase == .pending {
-            // Toolbar owns the bottom-right corner; tuck the tag on the left.
             labelOrigin.x = sel.minX + pad
+            labelOrigin.y = sel.maxY + 6
+            let tag = NSRect(x: labelOrigin.x - pad, y: labelOrigin.y - pad / 2,
+                             width: labelSize.width + 2 * pad, height: labelSize.height + pad)
+            if tag.maxY > bounds.maxY - 4 || tag.intersects(toolbar.frame) {
+                labelOrigin.y = sel.maxY - labelSize.height - pad
+            }
         }
         if labelOrigin.y < 4 {
             labelOrigin.y = sel.maxY + 6
@@ -338,13 +540,19 @@ private final class SelectionView: NSView {
     }
 }
 
-/// Dark floating pill with three big round buttons — ✕ / ✦ Ask AI / ✓ —
-/// plus a one-line key hint. Custom drawn so it reads clearly over any
-/// screen content instead of relying on system button bezels.
+/// Floating annotation tools and completion actions, visible as soon as a region is selected.
 private final class SelectionToolbar: NSView {
     var onCancel: (() -> Void)?
     var onAskAI: (() -> Void)?
     var onConfirm: (() -> Void)?
+    var onToolSelected: ((AnnotationTool?) -> Void)?
+    var onUndo: (() -> Void)?
+    var onRedo: (() -> Void)?
+    private var toolButtons: [(AnnotationTool?, RoundButton)] = []
+
+    func selectTool(_ tool: AnnotationTool?) {
+        for (value, button) in toolButtons { button.isSelected = value == tool }
+    }
 
     private let stack = NSStackView()
 
@@ -374,6 +582,25 @@ private final class SelectionToolbar: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
+        for (tool, symbol, tip) in [(nil, "hand.draw", "移动选区"),
+                                    (AnnotationTool.pen, "pencil.tip", "画笔"),
+                                    (.arrow, "arrow.up.right", "箭头"),
+                                    (.text, "textformat", "文字")] as [(AnnotationTool?, String, String)] {
+            let button = RoundButton(symbol: symbol, title: nil,
+                                     tint: NSColor(white: 1, alpha: 0.16), fg: .white, tip: tip) { [weak self] in
+                self?.selectTool(tool)
+                self?.onToolSelected?(tool)
+            }
+            toolButtons.append((tool, button))
+            stack.addArrangedSubview(button)
+        }
+        selectTool(nil)
+        stack.addArrangedSubview(RoundButton(symbol: "arrow.uturn.backward", title: nil,
+                                             tint: NSColor(white: 1, alpha: 0.16), fg: .white,
+                                             tip: "撤销 (⌘Z)") { [weak self] in self?.onUndo?() })
+        stack.addArrangedSubview(RoundButton(symbol: "arrow.uturn.forward", title: nil,
+                                             tint: NSColor(white: 1, alpha: 0.16), fg: .white,
+                                             tip: "重做 (⌘⇧Z)") { [weak self] in self?.onRedo?() })
         stack.addArrangedSubview(RoundButton(symbol: "xmark", title: nil,
                                              tint: NSColor(white: 1, alpha: 0.16), fg: .white,
                                              tip: "Cancel  (Esc)") { [weak self] in self?.onCancel?() })
@@ -397,6 +624,7 @@ private final class SelectionToolbar: NSView {
 private final class RoundButton: NSView {
     private let action: () -> Void
     private let tint: NSColor
+    var isSelected = false { didSet { refresh() } }
     private var hovering = false { didSet { refresh() } }
     private var pressed = false { didSet { refresh() } }
     private let height: CGFloat = 36
@@ -449,9 +677,9 @@ private final class RoundButton: NSView {
     }
 
     private func refresh() {
-        var c = tint
-        if pressed { c = tint.blended(withFraction: 0.25, of: .black) ?? tint }
-        else if hovering { c = tint.blended(withFraction: 0.18, of: .white) ?? tint }
+        var c = isSelected ? NSColor.systemBlue : tint
+        if pressed { c = c.blended(withFraction: 0.25, of: .black) ?? c }
+        else if hovering { c = c.blended(withFraction: 0.18, of: .white) ?? c }
         layer?.backgroundColor = c.cgColor
     }
 

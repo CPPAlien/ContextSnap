@@ -98,6 +98,32 @@ struct SettingsView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 6) {
+                Toggle("Break reminder pet", isOn: $store.breakReminderEnabled)
+                if store.breakReminderEnabled {
+                    HStack(spacing: 8) {
+                        Text("Nudge me after").font(.callout)
+                        Picker("", selection: $store.breakIntervalMinutes) {
+                            ForEach([20, 30, 45, 60], id: \.self) { Text("\($0) min").tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 92)
+                        Text("of work, break for").font(.callout)
+                        Picker("", selection: $store.breakLengthMinutes) {
+                            ForEach([1, 3, 5], id: \.self) { Text("\($0) min").tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 82)
+                        Spacer()
+                        Button("Say hi") { BreakReminderController.shared.preview() }
+                    }
+                }
+                Text("A small pet hops into the middle of your screen when you've been typing for too long. Time away from the keyboard already counts as a break, so it stays quiet when you're not here.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Ask AI commands").font(.headline)
                 HStack {
                     Text("Claude").frame(width: 54, alignment: .leading)

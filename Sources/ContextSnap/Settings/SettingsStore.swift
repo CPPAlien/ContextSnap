@@ -14,6 +14,9 @@ final class SettingsStore: ObservableObject {
         static let claudeCommand = "claudeCommand"
         static let codexCommand = "codexCommand"
         static let aiBackend = "aiBackend"
+        static let breakReminderEnabled = "breakReminderEnabled"
+        static let breakIntervalMinutes = "breakIntervalMinutes"
+        static let breakLengthMinutes = "breakLengthMinutes"
     }
 
     @Published var hotkeyKeyCode: UInt32 {
@@ -42,6 +45,19 @@ final class SettingsStore: ObservableObject {
     @Published var aiBackend: AIBackend {
         didSet { UserDefaults.standard.set(aiBackend.rawValue, forKey: Key.aiBackend) }
     }
+    /// Sends a little pet to the middle of the screen after a long stretch
+    /// of uninterrupted work.
+    @Published var breakReminderEnabled: Bool {
+        didSet { UserDefaults.standard.set(breakReminderEnabled, forKey: Key.breakReminderEnabled) }
+    }
+    /// Minutes of keyboard time before the pet shows up.
+    @Published var breakIntervalMinutes: Int {
+        didSet { UserDefaults.standard.set(breakIntervalMinutes, forKey: Key.breakIntervalMinutes) }
+    }
+    /// How long the pet keeps you company once you take the break.
+    @Published var breakLengthMinutes: Int {
+        didSet { UserDefaults.standard.set(breakLengthMinutes, forKey: Key.breakLengthMinutes) }
+    }
     @Published private(set) var launchAtLogin: Bool
     @Published var launchAtLoginError: String?
 
@@ -69,6 +85,9 @@ final class SettingsStore: ObservableObject {
         let codex = d.string(forKey: Key.codexCommand) ?? ""
         self.codexCommand = codex.isEmpty ? AIBackend.codex.defaultCommand : codex
         self.aiBackend = d.string(forKey: Key.aiBackend).flatMap(AIBackend.init(rawValue:)) ?? .claude
+        self.breakReminderEnabled = d.object(forKey: Key.breakReminderEnabled) as? Bool ?? false
+        self.breakIntervalMinutes = d.object(forKey: Key.breakIntervalMinutes) as? Int ?? 45
+        self.breakLengthMinutes = d.object(forKey: Key.breakLengthMinutes) as? Int ?? 1
         if #available(macOS 13.0, *) {
             self.launchAtLogin = SMAppService.mainApp.status == .enabled
         } else {

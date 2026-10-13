@@ -32,6 +32,11 @@ One capture. One paste. Always the right format.
 
 - **Global hotkey** — `⇧⌘S` (rebindable) to capture a region with the native
   macOS selection UI.
+- **Annotate while selecting** — after dragging a region, use the pen, arrow,
+  or text tool directly on the frozen screen. Switch tools with `V` (move),
+  `P` (pen), `A` (arrow), or `T` (text) when not typing. Undo with `⌘Z` and
+  redo with `⌘⇧Z`; click ✓ or press Return to copy and finish, or Esc to cancel.
+  Click a stack tile to edit later.
 - **Floating stack** — captures pile up in a translucent panel that floats
   above every Space, so you can queue up multiple shots before pasting.
 - **Multi-format clipboard** — every shot is written to the pasteboard as
@@ -113,7 +118,9 @@ In the chat window you can also:
 ## Use it
 
 1. Press `⇧⌘S` anywhere → drag-select a region.
-2. The shot appears in the floating stack (top-right corner).
+2. Annotate directly in the selection with the pen, arrow, or text tool, then
+   click ✓ or press Return. The annotated shot is copied and added to the
+   floating stack without opening a preview.
 3. Switch to Claude Code → `⌘V` → Claude sees the image path and reads it.
 4. Or switch to WeChat → `⌘V` → an actual image attachment appears.
 5. Or **drag** the tile straight into any app for the same result.

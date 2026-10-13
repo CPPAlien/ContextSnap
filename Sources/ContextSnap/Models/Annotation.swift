@@ -211,7 +211,8 @@ extension Annotation {
             ]
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
-            NSAttributedString(string: text, attributes: attrs).draw(at: point)
+            let label = NSAttributedString(string: text, attributes: attrs)
+            label.draw(at: CGPoint(x: point.x, y: point.y - label.size().height))
             NSGraphicsContext.restoreGraphicsState()
             context.restoreGState()
             return

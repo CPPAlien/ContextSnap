@@ -27,18 +27,17 @@ enum CodexCLI {
             .appendingPathComponent("contextsnap-codex-\(UUID().uuidString).txt")
         defer { try? FileManager.default.removeItem(at: lastMessageURL) }
 
-        var args = ["exec"]
+        // These options belong to `exec`, not its `resume` subcommand.
+        var args = ["exec", "--sandbox", "read-only", "--cd", workingDirectory.path]
         if let sessionID, !sessionID.isEmpty {
             args += ["resume", sessionID]
         }
         args += ["--skip-git-repo-check",
-                 "--sandbox", "read-only",
                  "--json",
-                 "--output-last-message", lastMessageURL.path,
-                 "--cd", workingDirectory.path]
+                 "--output-last-message", lastMessageURL.path]
         // `--image` only applies to a fresh session; a resumed thread already
         // has the screenshot in its history.
-        if sessionID == nil, let imagePath {
+        if sessionID?.isEmpty != false, let imagePath {
             args += ["--image", imagePath]
         }
         // `--image` is variadic, so without this separator it swallows the
@@ -96,7 +95,9 @@ enum CodexCLI {
             let detail = stderr
                 .split(separator: "\n")
                 .map { $0.trimmingCharacters(in: .whitespaces) }
-                .last(where: { !$0.isEmpty && !$0.hasPrefix("Reading additional input") }) ?? ""
+                .filter { !$0.hasPrefix("Reading additional input") }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             throw AIFailure(message: detail.isEmpty
                             ? "\(command) exited with status \(process.terminationStatus)."
                             : detail)

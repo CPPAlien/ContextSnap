@@ -27,26 +27,18 @@ struct InteractiveCapture {
 enum ScreenCapturer {
     static func captureInteractive() async -> InteractiveCapture? {
         guard let selection = await SelectionOverlay.select() else { return nil }
-        let cocoaRect = selection.rect
-        // Give the overlay one runloop tick to fully order out before we
-        // ask the WindowServer for a screenshot — otherwise the dim layer
-        // can sneak into the capture on slower machines.
-        try? await Task.sleep(nanoseconds: 30_000_000)
-
-        guard let cgImage = await capture(cocoaRect: cocoaRect) else { return nil }
-        let nsImage = NSImage(cgImage: cgImage, size: cocoaRect.size)
-
+        let nsImage = selection.image
         let url = ShotStore.newURL()
-        let bitmap = NSBitmapImageRep(cgImage: cgImage)
-        guard let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
-        try? png.write(to: url)
-        return InteractiveCapture(shot: Shot(url: url, image: nsImage), action: selection.action)
+        guard let png = nsImage.pngData() else { return nil }
+        do { try png.write(to: url) } catch { return nil }
+        return InteractiveCapture(shot: Shot(url: url, image: nsImage, annotations: selection.annotations),
+                                  action: selection.action)
     }
 
     /// Captures a global Cocoa rect using ScreenCaptureKit. CGWindowListCreateImage
     /// is deprecated on macOS 14 and on macOS 15 it returns only the desktop
     /// wallpaper (windows stripped) regardless of TCC grant.
-    private static func capture(cocoaRect: NSRect) async -> CGImage? {
+    static func capture(cocoaRect: NSRect) async -> CGImage? {
         guard let screen = screen(containing: cocoaRect),
               let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
         else { return nil }

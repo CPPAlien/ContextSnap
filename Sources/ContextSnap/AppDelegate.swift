@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Probe for installed agent CLIs now so the first chat window already
         // knows whether it can offer the Codex switch.
         AIBackendAvailability.shared.refresh()
+        BreakReminderController.shared.start()
         debugHooks()
 
         Publishers.CombineLatest(settings.$hotkeyKeyCode, settings.$hotkeyModifiers)
@@ -93,7 +94,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// CONTEXTSNAP_DEBUG_CHAT=<png> opens the chat window at launch;
-    /// CONTEXTSNAP_DEBUG_SELECT=1 opens the selection overlay at launch.
+    /// CONTEXTSNAP_DEBUG_SELECT=1 opens the selection overlay at launch;
+    /// CONTEXTSNAP_DEBUG_PET=1 sends the break-reminder pet out at launch.
     private func debugHooks() {
         let env = ProcessInfo.processInfo.environment
         if let path = env["CONTEXTSNAP_DEBUG_CHAT"], let image = NSImage(contentsOfFile: path) {
@@ -102,13 +104,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let seed = env["CONTEXTSNAP_DEBUG_REPLY"].flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.openChat(for: shot, seedReply: seed) }
         }
+        if env["CONTEXTSNAP_DEBUG_PET"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { BreakReminderController.shared.preview() }
+        }
         if env["CONTEXTSNAP_DEBUG_SELECT"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.capture() }
         }
     }
 
     private func openChat(for shot: Shot, seedReply: String? = nil) {
-        let controller = AIChatWindowController(shot: shot, seedReply: seedReply)
+        // AI sees the same marked-up image that is copied to the clipboard.
+        let chatShot: Shot
+        if !shot.annotations.isEmpty, let url = MultiFormatPasteboard.exportURL(for: shot),
+           let image = NSImage(contentsOf: url) {
+            chatShot = Shot(url: url, image: image)
+        } else {
+            chatShot = shot
+        }
+        let controller = AIChatWindowController(shot: chatShot, seedReply: seedReply)
         controller.onClose = { [weak self, weak controller] in
             self?.chatWindows.removeAll { $0 === controller }
         }
